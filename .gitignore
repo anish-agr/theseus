@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Generated demo traces (regenerate: python engine/scripts/generate.py)
+fixtures/demo/
+tools/viewer/demo-trace.jsonl
+
+# ML lane (models, datasets, runs) — populated from milestone M0.5 on
+learning/**/runs/
+learning/**/*.onnx
+learning/**/*.pt
+learning/**/*.mlpackage
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+
+# Xcode (from milestone M1 on)
+apps/ios/**/xcuserdata/
+apps/ios/**/DerivedData/

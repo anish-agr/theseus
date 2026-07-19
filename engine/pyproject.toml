@@ -1,0 +1,9 @@
+[project]
+name = "theseus-engine"
+version = "0.1.0"
+description = "Platform-free navigation core for Theseus: occupancy grid, A*/D* Lite, steering, guidance, FSM, simulator. Stdlib only by design (Swift-port parity)."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

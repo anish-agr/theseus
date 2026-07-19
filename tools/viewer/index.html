@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Theseus — trace viewer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background:#14171c; color:#cfd6e1; font:14px/1.45 ui-monospace,Consolas,monospace;
+         display:flex; flex-direction:column; align-items:center; gap:10px; padding:14px; }
+  h1 { font-size:15px; font-weight:600; color:#e8edf5; letter-spacing:.04em; }
+  h1 .thread { color:#4dd0e1; }
+  #cueBanner { min-height:26px; font-size:15px; color:#9adf9f; }
+  #cueBanner.off { color:#f0a35e; } #cueBanner.arr { color:#7ee29a; font-weight:700; }
+  canvas { background:#101318; border:1px solid #2a313c; border-radius:6px; max-width:100%; }
+  #bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; }
+  button { background:#232a33; color:#cfd6e1; border:1px solid #39424e; border-radius:5px;
+           padding:4px 12px; font:inherit; cursor:pointer; }
+  button:hover { background:#2c3540; }
+  input[type=range] { width:min(560px,80vw); accent-color:#4dd0e1; }
+  #stats { font-size:12.5px; color:#8b95a5; }
+  #stats b { color:#e8edf5; font-weight:600; }
+  label { font-size:12.5px; color:#8b95a5; user-select:none; }
+  #drop { font-size:12px; color:#5c6675; }
+  .legend { display:flex; gap:14px; font-size:12px; color:#8b95a5; flex-wrap:wrap; justify-content:center; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+</style>
+</head>
+<body>
+<h1>THESEUS <span class="thread">— follow the thread</span></h1>
+<div id="cueBanner">loading trace…</div>
+<canvas id="cv" width="920" height="700"></canvas>
+<div id="bar">
+  <button id="play">▶ play</button>
+  <button id="speed">1×</button>
+  <input type="range" id="seek" min="0" max="0" value="0">
+  <label><input type="checkbox" id="tglPath" checked> path</label>
+  <label><input type="checkbox" id="tglSmooth" checked> thread</label>
+  <label><input type="checkbox" id="tglTruth" checked> ground truth</label>
+  <label><input type="checkbox" id="tglFov" checked> sensor</label>
+</div>
+<div id="stats"></div>
+<div class="legend">
+  <span><span class="sw" style="background:#1b1f26"></span>unknown</span>
+  <span><span class="sw" style="background:#27303c"></span>seen free</span>
+  <span><span class="sw" style="background:#d9a441"></span>seen occupied</span>
+  <span><span class="sw" style="background:#4db6ac"></span>planned path</span>
+  <span><span class="sw" style="background:#e8edf5"></span>smoothed thread</span>
+  <span><span class="sw" style="background:#4dd0e1"></span>agent</span>
+  <span><span class="sw" style="background:#ef5350"></span>person (truth)</span>
+</div>
+<div id="drop">drag &amp; drop any *.jsonl trace to replay it · generate with: python engine/scripts/generate.py</div>
+<script>
+"use strict";
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const banner = document.getElementById("cueBanner"), stats = document.getElementById("stats");
+const seek = document.getElementById("seek"), playBtn = document.getElementById("play");
+const speedBtn = document.getElementById("speed");
+const tgl = id => document.getElementById(id).checked;
+
+let H = null, frames = [], snaps = [], cur = -1, playing = false, speed = 1, acc = 0, lastTs = 0;
+let occ = null, lastPath = null, lastSmooth = null, lastCue = null, replans = 0, lastMs = null;
+const SNAP_EVERY = 50;
+const SPEEDS = [0.5, 1, 2, 4];
+
+function loadText(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  H = JSON.parse(lines[0]);
+  frames = lines.slice(1).map(l => JSON.parse(l));
+  occ = new Uint8Array(H.w * H.h);
+  // snapshots for fast scrubbing (also capture persisted path/cue state)
+  snaps = [];
+  let o = new Uint8Array(H.w * H.h), p = null, s = null, c = null, r = 0, ms = null;
+  for (let i = 0; i < frames.length; i++) {
+    if (i % SNAP_EVERY === 0)
+      snaps.push({ i, occ: o.slice(), path: p, smooth: s, cue: c, replans: r, ms });
+    const f = frames[i];
+    for (const [x, y, st] of (f.occ || [])) o[y * H.w + x] = st;
+    if (f.path) p = f.path;
+    if (f.smoothed) s = f.smoothed;
+    if (f.cue) c = f.cue;
+    if (f.replan_ms != null) ms = f.replan_ms;
+    r += (f.events || []).filter(e => e === "REROUTED" || e === "PLANNED").length;
+  }
+  seek.max = frames.length - 1;
+  setFrame(0);
+  banner.textContent = `${H.name}: ${frames.length} frames · ${(frames.length * H.dt).toFixed(0)} s of navigation`;
+}
+
+function setFrame(i) {
+  i = Math.max(0, Math.min(frames.length - 1, i | 0));
+  let sIdx = Math.min(Math.floor(i / SNAP_EVERY), snaps.length - 1);
+  if (cur < snaps[sIdx].i || cur > i || cur < 0) {   // rebuild from snapshot
+    const sn = snaps[sIdx];
+    occ.set(sn.occ); lastPath = sn.path; lastSmooth = sn.smooth; lastCue = sn.cue;
+    replans = sn.replans; lastMs = sn.ms; cur = sn.i - 1;
+  }
+  for (let k = cur + 1; k <= i; k++) {
+    const f = frames[k];
+    for (const [x, y, st] of (f.occ || [])) occ[y * H.w + x] = st;
+    if (f.path) lastPath = f.path;
+    if (f.smoothed) lastSmooth = f.smoothed;
+    if (f.cue) lastCue = f.cue;
+    if (f.replan_ms != null) lastMs = f.replan_ms;
+    replans += (f.events || []).filter(e => e === "REROUTED" || e === "PLANNED").length;
+  }
+  cur = i; seek.value = i; draw();
+}
+
+// world (meters, +y up) -> canvas px (y down)
+let scale = 1, ox = 0, oy = 0;
+function fit() {
+  const wpx = H.w, hpx = H.h;
+  scale = Math.min((cv.width - 20) / wpx, (cv.height - 20) / hpx);
+  ox = (cv.width - wpx * scale) / 2; oy = (cv.height - hpx * scale) / 2;
+}
+const wx = m => ox + (m / H.cell) * scale;
+const wy = m => cv.height - oy - (m / H.cell) * scale;
+
+function draw() {
+  if (!H) return;
+  fit();
+  const f = frames[cur];
+  ctx.fillStyle = "#101318"; ctx.fillRect(0, 0, cv.width, cv.height);
+  // occupancy (agent's belief)
+  const colors = ["#1b1f26", "#27303c", "#d9a441"];
+  for (let y = 0; y < H.h; y++) for (let x = 0; x < H.w; x++) {
+    ctx.fillStyle = colors[occ[y * H.w + x]];
+    ctx.fillRect(ox + x * scale, cv.height - oy - (y + 1) * scale, scale + 0.5, scale + 0.5);
+  }
+  // ground-truth furniture outlines
+  if (tgl("tglTruth")) {
+    ctx.strokeStyle = "rgba(160,170,190,0.35)"; ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+    ctx.fillStyle = "rgba(160,170,190,0.55)"; ctx.font = "10px ui-monospace,Consolas";
+    for (const [x, y, w, h, label] of (H.furniture || [])) {
+      ctx.strokeRect(wx(x), wy(y + h), w / H.cell * scale, h / H.cell * scale);
+      if (label && label !== "wall")
+        ctx.fillText(label, wx(x) + 3, wy(y + h) + 11);
+    }
+    ctx.setLineDash([]);
+    for (const [name, [x, y]] of Object.entries(H.waypoints || {})) {
+      ctx.fillStyle = "#b48ead"; ctx.beginPath();
+      ctx.arc(wx(x), wy(y), 4, 0, 7); ctx.fill();
+      ctx.fillText("◈ " + name, wx(x) + 6, wy(y) - 5);
+    }
+  }
+  // sensor FOV wedge
+  const [px, py, th] = f.pose;
+  if (tgl("tglFov") && H.sensor) {
+    const half = (H.sensor.fov_deg * Math.PI / 180) / 2, R = H.sensor.range / H.cell * scale;
+    ctx.fillStyle = "rgba(77,208,225,0.06)";
+    ctx.beginPath(); ctx.moveTo(wx(px), wy(py));
+    ctx.arc(wx(px), wy(py), R, -(th + half), -(th - half));
+    ctx.closePath(); ctx.fill();
+  }
+  // planned path (cells) + smoothed thread (world pts)
+  if (tgl("tglPath") && lastPath) {
+    ctx.strokeStyle = "#4db6ac"; ctx.lineWidth = 1.5; ctx.beginPath();
+    lastPath.forEach(([cxl, cyl], i) => {
+      const X = ox + (cxl + 0.5) * scale, Y = cv.height - oy - (cyl + 0.5) * scale;
+      i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+    });
+    ctx.stroke();
+  }
+  if (tgl("tglSmooth") && lastSmooth) {
+    ctx.strokeStyle = "#e8edf5"; ctx.lineWidth = 2; ctx.beginPath();
+    lastSmooth.forEach(([X, Y], i) => i ? ctx.lineTo(wx(X), wy(Y)) : ctx.moveTo(wx(X), wy(Y)));
+    ctx.stroke();
+  }
+  // guidance target
+  if (lastCue && lastCue.target) {
+    ctx.strokeStyle = "#9adf9f"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(wx(lastCue.target[0]), wy(lastCue.target[1]), 5, 0, 7); ctx.stroke();
+  }
+  // movers (ground truth)
+  for (const [mx, my, mr] of (f.movers || [])) {
+    ctx.fillStyle = "rgba(239,83,80,0.75)";
+    ctx.beginPath(); ctx.arc(wx(mx), wy(my), mr / H.cell * scale, 0, 7); ctx.fill();
+  }
+  // agent
+  const r = (H.radius || 0.3) / H.cell * scale;
+  ctx.fillStyle = "#4dd0e1"; ctx.save();
+  ctx.translate(wx(px), wy(py)); ctx.rotate(-th);
+  ctx.beginPath(); ctx.moveTo(r * 1.6, 0); ctx.lineTo(-r * 0.8, r * 0.9);
+  ctx.lineTo(-r * 0.8, -r * 0.9); ctx.closePath(); ctx.fill(); ctx.restore();
+
+  // banner + stats
+  if (lastCue) {
+    const c = lastCue, arrow = { straight: "↑", turn_left: "↰", turn_right: "↱",
+                                 arrive: "◈", off_route: "⚠" }[c.kind] || "·";
+    banner.className = c.kind === "arrive" ? "arr" : (c.kind === "off_route" ? "off" : "");
+    banner.textContent = `${arrow} ${c.kind.replace("_", " ")}  ` +
+      (c.kind === "straight" ? `${c.dist.toFixed(1)} m` :
+       c.kind === "arrive" ? "destination reached" :
+       `${Math.abs(c.deg).toFixed(0)}°`) +
+      `   ·   corridor ${c.corridor.toFixed(1)} m`;
+  }
+  stats.innerHTML =
+    `t <b>${f.t.toFixed(1)}s</b> · state <b>${f.state}</b> · frame <b>${cur + 1}/${frames.length}</b>` +
+    ` · replans <b>${replans}</b>` + (lastMs != null ? ` · last replan <b>${lastMs.toFixed(1)} ms</b>` : "") +
+    ` · movers <b>${(f.movers || []).length}</b>`;
+}
+
+function tickAnim(ts) {
+  if (!playing || !H) { lastTs = 0; return; }   // loop only runs while playing
+  if (!lastTs) lastTs = ts;
+  acc += (ts - lastTs) * speed; lastTs = ts;
+  const step = H.dt * 1000;
+  while (acc >= step) {
+    acc -= step;
+    if (cur >= frames.length - 1) { playing = false; playBtn.textContent = "▶ replay"; cur = -1; setFrame(0); break; }
+    setFrame(cur + 1);
+  }
+  requestAnimationFrame(tickAnim);
+}
+
+playBtn.onclick = () => {
+  playing = !playing;
+  playBtn.textContent = playing ? "❚❚ pause" : "▶ play";
+  if (playing) { lastTs = 0; acc = 0; requestAnimationFrame(tickAnim); }
+};
+speedBtn.onclick = () => { speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; speedBtn.textContent = speed + "×"; };
+seek.oninput = () => { playing = false; playBtn.textContent = "▶ play"; setFrame(+seek.value); };
+["tglPath", "tglSmooth", "tglTruth", "tglFov"].forEach(id =>
+  document.getElementById(id).onchange = draw);
+
+document.body.addEventListener("dragover", e => e.preventDefault());
+document.body.addEventListener("drop", e => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (file) file.text().then(loadText);
+});
+
+fetch("./demo-trace.jsonl").then(r => { if (!r.ok) throw 0; return r.text(); })
+  .then(loadText)
+  .catch(() => { banner.textContent = "no demo-trace.jsonl found — drag & drop a trace file"; });
+</script>
+</body>
+</html>
