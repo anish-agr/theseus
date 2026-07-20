@@ -231,7 +231,8 @@ document.body.addEventListener("drop", e => {
   if (file) file.text().then(loadText);
 });
 
-fetch("./demo-trace.jsonl").then(r => { if (!r.ok) throw 0; return r.text(); })
+const src = new URLSearchParams(location.search).get("trace") || "./demo-trace.jsonl";
+fetch(src).then(r => { if (!r.ok) throw 0; return r.text(); })
   .then(loadText)
   .catch(() => { banner.textContent = "no demo-trace.jsonl found — drag & drop a trace file"; });
 </script>

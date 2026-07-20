@@ -21,7 +21,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, replace
 
-from . import astar
+from . import astar, frontier
 from .dstar_lite import DStarLite
 from .fsm import Event, State, StateMachine
 from .geometry import Cell, Vec, bearing, dist, wrap_angle
@@ -195,6 +195,39 @@ class NavController:
                        path=path_field, smoothed=smoothed_field,
                        replan_ms=replan_ms)
         return False
+
+    # ---- explore phase (virtual-agent auto-mapping) ------------------------
+
+    def run_explore(self, max_targets: int = 60, per_target: int = 400,
+                    min_cluster: int = 4) -> dict:
+        """Frontier-driven auto-mapping: walk to the nearest frontier
+        cluster until none remain. Target ranking is pessimistic (only
+        chase frontiers reachable through known space); motion reuses the
+        optimistic mapping primitive — mapping-mode semantics, same as a
+        user sweeping their phone, just self-directed."""
+        est = self.sim.est
+        self.fsm.step(Event.SCAN_STARTED)
+        changed = self._tick_world()          # open our eyes before asking
+        est.refresh_clearance(force=True)     # "is there anything to see?"
+        self._emit(changed, events=["EXPLORE_STARTED"])
+        visited = 0
+        failures = 0
+        while visited < max_targets:
+            est.refresh_clearance(force=True)
+            tgt = frontier.select_target(est, self._cell(), self.params,
+                                         min_cluster=min_cluster,
+                                         min_dist_m=self.cfg.wp_arrive + 0.25)
+            if tgt is None:
+                break
+            visited += 1
+            if self._goto_optimistic(est.cell_center(tgt.cell), per_target):
+                failures = 0
+            else:
+                failures += 1
+                if failures >= 3:
+                    break  # the remaining clusters keep defeating us; stop
+        self.fsm.step(Event.MAP_READY)
+        return {"targets": visited, "failures": failures}
 
     # ---- guidance phase ("Ariadne mode") -----------------------------------
 

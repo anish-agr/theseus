@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import astar
 from .controller import NavController
-from .grid import PlanParams
+from .grid import FREE, PlanParams
 from .sim import Simulator
 from .trace import TraceWriter
 
@@ -111,6 +111,67 @@ def run_room(room: dict, *, sensor_range: float = 3.0,
     return trace, summary
 
 
+def _known_free_fraction(sim: Simulator, params: PlanParams) -> float:
+    """How much of the truly walkable floor the agent's map knows FREE."""
+    truth, est = sim.truth, sim.est
+    total = known = 0
+    for y in range(truth.height):
+        for x in range(truth.width):
+            c = (x, y)
+            if truth.state(c) == FREE and truth.clearance(c) >= params.radius:
+                total += 1
+                if est.state(c) == FREE:
+                    known += 1
+    return known / max(1, total)
+
+
+def run_explore_room(room: dict, *, sensor_range: float = 3.0,
+                     sensor_fov_deg: float = 110.0,
+                     params: PlanParams | None = None) -> tuple[TraceWriter, dict]:
+    """Frontier-explore a quiet copy of the room (movers removed): the
+    virtual-agent auto-mapping showcase."""
+    room = {**room, "movers": [], "name": room["name"] + "-explore"}
+    params = params or PlanParams(radius=0.28, safe_margin=0.5,
+                                  margin_weight=1.2)
+    sim = Simulator(room, params, sensor_range=sensor_range,
+                    sensor_fov_deg=sensor_fov_deg)
+    trace = TraceWriter({
+        "name": room["name"],
+        "cell": room["cell"],
+        "w": sim.est.width,
+        "h": sim.est.height,
+        "size_m": room["size_m"],
+        "dt": sim.dt,
+        "radius": params.radius,
+        "sensor": {"range": sensor_range, "fov_deg": sensor_fov_deg},
+        "waypoints": room.get("waypoints", {}),
+        "furniture": [[r["x"], r["y"], r["w"], r["h"], r.get("label", "")]
+                      for r in room.get("rects", [])],
+        "scan_pts": [],
+    })
+    nav = NavController(sim, params, trace)
+    stats = nav.run_explore()
+    summary = {
+        "room": room["name"],
+        "targets": stats["targets"],
+        "known_free_fraction": round(_known_free_fraction(sim, params), 3),
+        "sim_seconds": round(sim.tick * sim.dt, 1),
+        "frames": nav.frames,
+        "replans": nav.replans,
+        "collisions": sim.collisions,
+        "final_state": nav.fsm.state.value,
+    }
+    return trace, summary
+
+
+def run_mini_explore() -> tuple[TraceWriter, dict]:
+    return run_explore_room(MINI, sensor_range=2.5, sensor_fov_deg=120.0)
+
+
+def run_studio_explore() -> tuple[TraceWriter, dict]:
+    return run_explore_room(STUDIO, sensor_range=3.2, sensor_fov_deg=110.0)
+
+
 def run_mini() -> tuple[TraceWriter, dict]:
     return run_room(MINI, sensor_range=2.5, sensor_fov_deg=120.0,
                     guide_ticks=1200)
@@ -140,6 +201,18 @@ def main() -> None:
     trace.save(root / "fixtures" / "demo" / "studio-trace.jsonl")
     trace.save(root / "tools" / "viewer" / "demo-trace.jsonl")
     print("studio:", json.dumps(summary))
+
+    trace, summary = run_mini_explore()
+    trace.save(golden_dir / "mini-explore-trace.jsonl")
+    (golden_dir / "mini-explore.sha256").write_text(trace.sha256() + "\n",
+                                                   encoding="utf-8")
+    print("mini-explore  :", json.dumps(summary))
+
+    trace, summary = run_studio_explore()
+    trace.save(root / "fixtures" / "demo" / "explore-trace.jsonl")
+    trace.save(root / "tools" / "viewer" / "explore-trace.jsonl")
+    print("studio-explore:", json.dumps(summary))
+    print("view explore: /tools/viewer/index.html?trace=explore-trace.jsonl")
 
 
 if __name__ == "__main__":

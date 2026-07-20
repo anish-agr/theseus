@@ -5,9 +5,11 @@ __pycache__/
 .venv/
 venv/
 
-# Generated demo traces (regenerate: python engine/scripts/generate.py)
+# Generated demo traces (regenerate: python engine/scripts/generate.py,
+# python learning/demo_depth.py). Goldens under fixtures/golden/ ARE tracked.
 fixtures/demo/
-tools/viewer/demo-trace.jsonl
+tools/viewer/*-trace.jsonl
+learning/out/
 
 # ML lane (models, datasets, runs) — populated from milestone M0.5 on
 learning/**/runs/
