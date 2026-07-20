@@ -70,6 +70,26 @@ def cam_to_world(p: XYZ, pose: CameraPose) -> XYZ:
             pose.pos[2] + x * r[2] + y * d[2] + z * f[2])
 
 
+def world_to_cam(p: XYZ, pose: CameraPose) -> XYZ:
+    """Inverse of cam_to_world. The camera axes are orthonormal, so the
+    inverse rotation is just projection onto each axis."""
+    r, d, f = pose.axes()
+    v = (p[0] - pose.pos[0], p[1] - pose.pos[1], p[2] - pose.pos[2])
+    return (v[0] * r[0] + v[1] * r[1] + v[2] * r[2],
+            v[0] * d[0] + v[1] * d[1] + v[2] * d[2],
+            v[0] * f[0] + v[1] * f[1] + v[2] * f[2])
+
+
+def project_pixel(p_world: XYZ, k: Intrinsics, pose: CameraPose):
+    """World point -> (u, v) pixel, or None if behind the camera. The
+    inverse of unproject+cam_to_world; used to synthesize detections and,
+    on-device, to place a detection box's world hit back on screen."""
+    x, y, z = world_to_cam(p_world, pose)
+    if z <= 1e-6:
+        return None
+    return (k.cx + x / z * k.fx, k.cy + y / z * k.fy)
+
+
 def pixel_ray_to_floor(u: float, v: float, k: Intrinsics,
                        pose: CameraPose, floor_z: float = 0.0) -> Vec | None:
     """Where the ray through this pixel meets the floor plane (None if it

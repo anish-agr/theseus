@@ -15,20 +15,30 @@ as solvers over the shared world model (see ARCHITECTURE.md §0).
 - [x] Golden trace fixtures + HTML replay viewer
 - 37 tests green.
 
-## M0.5 — ML lanes offline (Windows, next)
+## M0.5 — ML lanes offline (Windows) — largely ✅
 
-Goal: de-risk the two chosen perception ML features with zero Apple
-hardware. Details in learning/README.md.
+Goal: de-risk the ML features with zero Apple hardware. Details in
+learning/README.md. The projection/registry/RL *math* is done and tested
+against synthetic ground truth; what remains needs a real model + footage.
 
-- [ ] Depth: run Depth Anything V2 Small (ONNX) on photos/video of a real
-      room; project to a floor-plane point cloud; rasterize into the SAME
-      OccupancyGrid; view in the trace viewer
-- [ ] Detection: YOLO11n on room video → labeled boxes → waypoint
-      proposals with the merge/decay policy implemented + unit-tested
+- [x] Depth projection pipeline: unproject → gravity floor-fit → height
+      split → temporal persistence → occupancy ingest, all stdlib + tested;
+      `demo_depth.py` recovers a room and writes a viewer trace (golden)
+- [x] Detection→waypoint chain: pixel-ray floor projection + merge/promote/
+      decay registry; `demo_detect.py` recovers fridge/chair/table from
+      noisy synthetic detections, rejects ghosts (golden-style test)
+- [x] RL groundwork (pulled forward from M5): Gymnasium `NavEnv` over the
+      engine sim, procedural curriculum, SPL/success eval harness, scripted
+      baseline — all tested; PPO trainer wired (needs torch)
+- [x] Guarded real-model runners: `run_depth.py` (onnxruntime),
+      `run_detect.py` (ultralytics)
+- [ ] Run DA-V2-S / YOLO11n on real footage (needs `requirements.txt`
+      install + a room video)
 - [ ] Record a phone video walkthrough of Anish's room as the standing
-      test asset
-- Acceptance: a JPEG/video of a room becomes a plausible occupancy slice +
-  labeled waypoint set, replayed in the viewer.
+      test asset (Anish to capture)
+- Acceptance: a video of a room becomes a plausible occupancy slice +
+  labeled waypoint set, replayed in the viewer. *(Synthetic acceptance met;
+  real-footage acceptance pending the video.)*
 
 ## M1 — Mac + Xcode: the app exists
 

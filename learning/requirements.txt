@@ -1,0 +1,19 @@
+# Optional ML-lane dependencies. The engine and every *_demo / pipeline /
+# rl.env module need NONE of these — the offline demos run on the Python
+# stdlib alone. Install a lane's deps only when you run its real model.
+
+# Lane A — monocular depth on real footage (run_depth.py)
+onnxruntime>=1.17
+opencv-python>=4.9
+numpy>=1.26
+
+# Lane B — detection waypoints on real footage (run_detect.py)
+ultralytics>=8.1
+
+# Lane C — learned steering (rl/train.py, rl/evaluate.py with a net)
+gymnasium>=0.29
+stable-baselines3>=2.3
+torch>=2.2
+
+# Export a trained/relative model to Core ML — done on the Mac at M4/M5
+# coremltools>=7.1

@@ -7,6 +7,49 @@ lanes *feed* it (observations in, policies behind existing seams).
 Priorities per the 2026-07 decision: **Lane A and B first** (they upgrade
 the iPhone XR path and teach deployment), RL + inpainting after (M5/M6).
 
+## Runnable now — zero ML dependencies
+
+The perception/RL *math* is stdlib and tested; only the neural nets need
+`requirements.txt`. So the whole chain runs on Windows today against
+synthetic ground truth:
+
+```
+python learning/demo_depth.py    # depth → occupancy map, opens in the viewer
+python learning/demo_detect.py   # noisy detections → named waypoints (fridge/chair/table)
+python -m pytest learning -q     # 19 tests: projection, registry, RL env, metrics
+
+# watch the depth lane's output in the same viewer as the planner:
+python -m http.server 8123
+# → http://localhost:8123/tools/viewer/index.html?trace=depth-trace.jsonl
+```
+
+`demo_depth.py` and `demo_detect.py` render a synthetic room, run the
+**exact production geometry** (unproject → floor fit → height split →
+occupancy ingest; pixel-ray floor projection → merge/promote/decay), and
+prove it recovers the room / the objects. Swap the synthetic front-end
+for a real model (below) and nothing downstream changes.
+
+### File map
+
+```
+depth_projection.py   Lane A/B geometry: intrinsics, (un)project, floor fit,
+                      height split, persistence filter, occupancy ingest
+scene.py              analytic depth renderer for synthetic rooms (test input)
+pipeline.py           frames → viewer trace (reuses engine TraceWriter)
+demo_depth.py         Lane A end-to-end demo + golden (fixtures/golden/depth-mini)
+demo_detect.py        Lane B end-to-end demo (detections → waypoints)
+run_depth.py          Lane A on real footage (onnxruntime) — guarded CLI
+run_detect.py         Lane B on real footage (ultralytics) — guarded CLI
+rl/env.py             Lane C: Gymnasium NavEnv over the engine sim
+rl/rooms.py           procedural room curriculum (empty→static→clutter→movers)
+rl/evaluate.py        success-rate + SPL harness (any policy)
+rl/train.py           PPO trainer (stable-baselines3) — guarded CLI
+tests/                19 tests, no ML deps required
+```
+
+Install a lane's real dependencies only when you run its model:
+`pip install -r learning/requirements.txt`.
+
 ## Lane A — Monocular depth → pseudo-LiDAR (M0.5 offline, M4 on-device)
 
 The XR has no LiDAR; a depth network gives it one. Modern monocular depth
