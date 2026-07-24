@@ -52,16 +52,40 @@ def test_wide_route_passes():
 
 def test_nearest_semantic_routes_to_closest_instance():
     g = open_grid(40, 40, cell=0.05)
-    for y in range(20, 23):
-        for x in range(28, 31):
-            g.set_state((x, y), OCCUPIED, "seat")     # near seat
-    for y in range(2, 5):
-        for x in range(2, 5):
-            g.set_state((x, y), OCCUPIED, "seat")     # far seat
-    res = nearest_semantic(g, (20, 20), "seat", PARAMS)
+    near_seat = [(x, y) for y in range(20, 23) for x in range(28, 31)]
+    far_seat = [(x, y) for y in range(2, 5) for x in range(35, 38)]
+    for c in near_seat:
+        g.set_state(c, OCCUPIED, "seat")
+    for c in far_seat:
+        g.set_state(c, OCCUPIED, "seat")
+    res = nearest_semantic(g, (5, 20), "seat", PARAMS)
     assert res is not None
     end = res.cells[-1]
-    assert 27 <= end[0] <= 32 and 19 <= end[1] <= 24  # adjacent to near seat
-    assert g.labels.get(g.idx(end)) is None            # standing beside, not on
 
-    assert nearest_semantic(g, (20, 20), "fridge", PARAMS) is None
+    def cheb_m(c, cells):
+        return min(max(abs(c[0] - s[0]), abs(c[1] - s[1])) for s in cells) \
+            * g.cell_size
+
+    assert cheb_m(end, near_seat) <= 0.76      # within arm's reach of it
+    assert cheb_m(end, near_seat) < cheb_m(end, far_seat)  # the CLOSE one
+    assert g.labels.get(g.idx(end)) is None    # standing beside, not on
+
+    assert nearest_semantic(g, (5, 20), "fridge", PARAMS) is None
+
+
+def test_nearest_semantic_works_with_realistic_body_radius():
+    """Regression: strictly-adjacent goal cells have ~one-cell clearance,
+    so a real body radius made every object 'unreachable' until approach
+    points were introduced (found by engine/scripts/showcase.py)."""
+    body = PlanParams(radius=0.28, safe_margin=0.5, margin_weight=1.2)
+    g = open_grid(80, 60, cell=0.06)
+    for y in range(20, 34):
+        for x in range(40, 50):
+            g.set_state((x, y), OCCUPIED, "couch")
+    res = nearest_semantic(g, (5, 5), "couch", body)
+    assert res is not None
+    end = res.cells[-1]
+    assert g.traversable(end, body)            # you can actually stand there
+    d = min(max(abs(end[0] - x), abs(end[1] - y))
+            for y in range(20, 34) for x in range(40, 50)) * g.cell_size
+    assert d <= 0.76

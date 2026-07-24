@@ -61,17 +61,27 @@ def fits_through(grid: OccupancyGrid, pts: list[Vec], width_m: float,
 
 
 def nearest_semantic(grid: OccupancyGrid, start, label: str,
-                     params: PlanParams) -> PlanResult | None:
-    """Optimal route to the closest object carrying this semantic label
-    (ends on a traversable cell adjacent to it), or None."""
-    goals = []
-    for i, lab in grid.labels.items():
-        if lab != label:
-            continue
-        c = (i % grid.width, i // grid.width)
-        for v, _step in grid.neighbors8(c):
-            if grid.traversable(v, params):
-                goals.append(v)
+                     params: PlanParams,
+                     approach_m: float = 0.75) -> PlanResult | None:
+    """Optimal route to the closest object carrying this semantic label,
+    or None. The route ends at an *approach point*: the nearest cell the
+    BODY can legally occupy within approach_m (arm's reach) of the
+    object. Strictly adjacent cells never qualify — one cell away from
+    furniture is ~6 cm of clearance, and nobody's radius fits there;
+    "at the fridge" means standing in front of it, not inside it."""
+    labeled = [(i % grid.width, i // grid.width)
+               for i, lab in grid.labels.items() if lab == label]
+    if not labeled:
+        return None
+    r = max(1, int(approach_m / grid.cell_size))
+    near: set = set()
+    for (x, y) in labeled:
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if dx * dx + dy * dy <= r * r:
+                    near.add((x + dx, y + dy))
+    goals = [c for c in near
+             if grid.in_bounds(c) and grid.traversable(c, params)]
     if not goals:
         return None
-    return FlowField.build(grid, goals, params).route_from(start)
+    return FlowField.build(grid, sorted(goals), params).route_from(start)
