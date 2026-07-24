@@ -17,6 +17,10 @@ learning/**/*.onnx
 learning/**/*.pt
 learning/**/*.mlpackage
 
+# Local test videos (manifest footage/README.md IS tracked)
+footage/*
+!footage/README.md
+
 # OS / editor noise
 .DS_Store
 Thumbs.db

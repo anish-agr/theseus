@@ -13,7 +13,9 @@ as solvers over the shared world model (see ARCHITECTURE.md §0).
 - [x] Deterministic simulator (limited-FOV sensor, movers, collisions)
 - [x] Studio demo: map → guide to fridge past a pacing person, 0 collisions
 - [x] Golden trace fixtures + HTML replay viewer
-- 37 tests green.
+- [x] Walk mode: goal-free VFH roam + sensor-freshness & swept-body
+      safety gates (added after M0; golden, 0 collisions with a mover)
+- 89 engine tests green (113 with learning/).
 
 ## M0.5 — ML lanes offline (Windows) — largely ✅
 
@@ -62,7 +64,9 @@ against synthetic ground truth; what remains needs a real model + footage.
 ## M3 — Ariadne mode (human guidance, the hero)
 
 - [ ] Cue → CoreHaptics corridor patterns (intensity = corridor width)
-- [ ] PHASE spatial-audio beacon at the lookahead point
+- [ ] Phone-speaker audio beacon + voice as the BASELINE (no AirPods
+      available — head-tracked spatial audio is a future nicety, not a
+      dependency)
 - [ ] Voice cues (AVSpeech) + big-type HUD
 - [ ] On-body test protocol (blindfold tests come much later, with a
       spotter, after weeks of sighted validation)
@@ -87,10 +91,14 @@ against synthetic ground truth; what remains needs a real model + footage.
 - Acceptance: learned policy ≥ VFH on success rate in held-out rooms, and
   you can flip between them live in the HUD.
 
-## M6 — More solvers + research fun
+## M6 — More solvers + research fun (engine side pulled forward ✅)
 
-- [ ] Frontier explore mode (agent auto-maps a room)
-- [ ] Coverage/patrol routes; exit flow fields ("evacuation mode")
-- [ ] Fit-through queries UI ("will this couch make the turn?")
-- [ ] Map inpainting UNet (predict unseen occupancy) feeding explore
-- [ ] "What changed since yesterday" chunk diffs
+- [x] Frontier explore mode (agent auto-maps a room — golden, 100% floor)
+- [x] Coverage/patrol routes; exit flow fields ("evacuation mode")
+- [x] Fit-through queries ("will this couch make the turn?") — UI at M1+
+- [x] Map inpainting UNet — **trained 2026-07, beats nearest-known
+      baseline on held-out rooms (acc 0.844/0.770, IoU_occ 0.587/0.388)**;
+      on-device advisory integration later
+- [x] "What changed since yesterday" diffs (serialize.py kernel; chunked
+      per-room hashing lands with M2 persistence)
+- [ ] Multi-floor (stairs as portal edges); multi-device shared maps

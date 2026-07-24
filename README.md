@@ -12,7 +12,25 @@ hallway", find the fridge by name.
 > first, learned behavior on top. The human-guidance mode is nicknamed
 > **Ariadne mode** — the app holds the thread, you follow it.
 
-## Status — milestone M0 (engine on Windows) ✅
+## Status — M0 engine ✅ · M0.6 solvers ✅ · M0.5 ML lanes 🧪 (113 tests)
+
+Everything below runs on Windows with zero dependencies (the ML lanes'
+neural nets are optional extras — and the **inpainting UNet is already
+trained**: it beats the classical baseline on held-out rooms, acc 0.844
+vs 0.770). Full ledger: [docs/CHECKLIST.md](docs/CHECKLIST.md).
+
+```
+python -m pytest engine learning -q     # 113 tests
+python engine/scripts/generate.py       # all demo traces + goldens
+python engine/scripts/showcase.py       # fit-through, exits, coverage, semantics
+python learning/demo_depth.py           # depth -> occupancy, viewable
+python learning/demo_detect.py          # detections -> named waypoints
+python -m http.server 8123              # viewer: /tools/viewer/index.html
+#   ?trace=demo-trace.jsonl (guidance) ?trace=explore-trace.jsonl
+#   ?trace=walk-trace.jsonl            ?trace=depth-trace.jsonl
+```
+
+### The original M0 core
 
 The navigation core is a **pure-Python, stdlib-only** reference
 implementation, developed and property-tested on Windows before any Apple
