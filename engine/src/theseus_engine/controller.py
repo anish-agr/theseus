@@ -18,6 +18,7 @@ on D* Lite so mid-route world changes cost milliseconds, not a rebuild.
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, replace
 
@@ -25,7 +26,7 @@ from . import astar, frontier
 from .dstar_lite import DStarLite
 from .fsm import Event, State, StateMachine
 from .geometry import Cell, Vec, bearing, dist, wrap_angle
-from .grid import PlanParams
+from .grid import OCCUPIED, PlanParams
 from .guidance import ARRIVE, OFF_ROUTE, GuidanceFollower
 from .sim import Simulator
 from .steering import VFHSteering
@@ -228,6 +229,90 @@ class NavController:
                     break  # the remaining clusters keep defeating us; stop
         self.fsm.step(Event.MAP_READY)
         return {"targets": visited, "failures": failures}
+
+    # ---- walk mode (free roam, no destination) ------------------------------
+
+    def run_walk(self, ticks: int) -> dict:
+        """Walk mode: no destination — keep moving through free space,
+        reacting to whatever the sensor sees. This is the original
+        "longest unobstructed forward vector" idea made stable: VFH picks
+        the most open sector and hysteresis keeps the choice from
+        flickering. Uses mapping-mode optimism (unknown space ahead is
+        walkable until the continuously-running sensor objects) because
+        reactive avoidance is the sensor's job here, not the map's."""
+        self.fsm.step(Event.WALK_TOGGLED)
+        traveled = 0.0
+        blocked_ticks = 0
+        for _ in range(ticks):
+            changed = self._tick_world()
+            before = self._pos()
+            steer = self.steer_map.decide(self.sim.est, self.sim.pose, None)
+            # Two safety gates before advancing, both walk-mode-specific:
+            # (1) don't outrun the sensor — if the ground along the chosen
+            #     heading wasn't SEEN recently, pivot first so the FOV
+            #     sweeps it (a mover may have wandered into stale space);
+            # (2) swept-body check against LIVE cell states — VFH's thin
+            #     ray can miss a body-width graze, and the clearance field
+            #     it leans on is cached (refreshed every few ticks), which
+            #     is exactly long enough for a walking person to shift one
+            #     body width. Check actual occupied cells, not the cache.
+            if not steer.blocked and (not self._front_fresh(steer.heading)
+                                      or not self._swept_clear(steer.heading)):
+                steer = replace(steer, speed=0.0, reason="hold_safe")
+            self._move(steer)
+            traveled += dist(before, self._pos())
+            blocked_ticks += int(steer.blocked)
+            self._emit(changed, steer=steer)
+        self.fsm.step(Event.STOP)
+        return {"traveled_m": round(traveled, 2),
+                "blocked_ticks": blocked_ticks}
+
+    def _swept_clear(self, heading: float, advance_m: float = 0.3,
+                     pad: float = -0.02) -> bool:
+        """True if the body-swept corridor along `heading` has no
+        OCCUPIED cell INSIDE the legal clearance minimum, judged on
+        current cell states (which update every sense) instead of the
+        cached clearance field (which does not). The gate radius sits
+        just UNDER the body radius on purpose: skimming a wall at the
+        cost model's legal 0.28 m is allowed; a person's cells intruding
+        deep into the corridor — the thing the stale cache misses — is
+        not. A wider radius here re-vetoes legal passages and the walker
+        stalls (measured: 264/350 ticks held at +0.03 pad)."""
+        est = self.sim.est
+        x, y, _ = self.sim.pose
+        r = self.params.radius + pad
+        span = int(r / est.cell_size) + 1
+        ca, sa = math.cos(heading), math.sin(heading)
+        step = est.cell_size
+        d = step
+        while d <= advance_m:
+            px, py = x + ca * d, y + sa * d
+            pc = est.world_to_cell((px, py))
+            for dy in range(-span, span + 1):
+                for dx in range(-span, span + 1):
+                    c = (pc[0] + dx, pc[1] + dy)
+                    if (est.in_bounds(c) and est.state(c) == OCCUPIED
+                            and dist(est.cell_center(c), (px, py)) <= r):
+                        return False
+            d += step
+        return True
+
+    def _front_fresh(self, heading: float, dist_m: float = 0.5,
+                     max_age: int = 8) -> bool:
+        """True if every cell within dist_m along `heading` was observed
+        within the last max_age ticks."""
+        est = self.sim.est
+        x, y, _ = self.sim.pose
+        ca, sa = math.cos(heading), math.sin(heading)
+        steps = max(1, int(dist_m / est.cell_size))
+        for i in range(1, steps + 1):
+            d = i * est.cell_size
+            c = est.world_to_cell((x + ca * d, y + sa * d))
+            if not est.in_bounds(c):
+                return True          # the boundary is a wall, not a mover
+            if self.sim.tick - est.last_seen[est.idx(c)] > max_age:
+                return False
+        return True
 
     # ---- guidance phase ("Ariadne mode") -----------------------------------
 

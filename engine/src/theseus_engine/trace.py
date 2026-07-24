@@ -56,8 +56,13 @@ class TraceWriter:
     def sha256(self) -> str:
         return hashlib.sha256("\n".join(self._hash_lines).encode("utf-8")).hexdigest()
 
-    def save(self, path: str | Path) -> Path:
+    def save(self, path: str | Path, include_volatile: bool = True) -> Path:
+        """Write the trace. Golden fixtures pass include_volatile=False so
+        the committed files are byte-stable across regenerations (volatile
+        fields like replan_ms differ run-to-run without any behavior
+        change and would dirty git on every regen)."""
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("\n".join(self.lines) + "\n", encoding="utf-8")
+        lines = self.lines if include_volatile else self._hash_lines
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return p

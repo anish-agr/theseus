@@ -172,6 +172,54 @@ def run_studio_explore() -> tuple[TraceWriter, dict]:
     return run_explore_room(STUDIO, sensor_range=3.2, sensor_fov_deg=110.0)
 
 
+def run_walk_room(room: dict, *, sensor_range: float = 3.0,
+                  sensor_fov_deg: float = 110.0, ticks: int = 400,
+                  params: PlanParams | None = None) -> tuple[TraceWriter, dict]:
+    """Walk-mode showcase: wander with no destination while any movers do
+    their thing. Success is simply 'kept moving, touched nothing'."""
+    room = {**room, "name": room["name"] + "-walk"}
+    params = params or PlanParams(radius=0.28, safe_margin=0.5,
+                                  margin_weight=1.2)
+    sim = Simulator(room, params, sensor_range=sensor_range,
+                    sensor_fov_deg=sensor_fov_deg)
+    trace = TraceWriter({
+        "name": room["name"],
+        "cell": room["cell"],
+        "w": sim.est.width,
+        "h": sim.est.height,
+        "size_m": room["size_m"],
+        "dt": sim.dt,
+        "radius": params.radius,
+        "sensor": {"range": sensor_range, "fov_deg": sensor_fov_deg},
+        "waypoints": room.get("waypoints", {}),
+        "furniture": [[r["x"], r["y"], r["w"], r["h"], r.get("label", "")]
+                      for r in room.get("rects", [])],
+        "scan_pts": [],
+    })
+    nav = NavController(sim, params, trace)
+    stats = nav.run_walk(ticks)
+    summary = {
+        "room": room["name"],
+        "traveled_m": stats["traveled_m"],
+        "blocked_ticks": stats["blocked_ticks"],
+        "sim_seconds": round(sim.tick * sim.dt, 1),
+        "frames": nav.frames,
+        "collisions": sim.collisions,
+        "final_state": nav.fsm.state.value,
+    }
+    return trace, summary
+
+
+def run_mini_walk() -> tuple[TraceWriter, dict]:
+    return run_walk_room(MINI, sensor_range=2.5, sensor_fov_deg=120.0,
+                         ticks=350)
+
+
+def run_studio_walk() -> tuple[TraceWriter, dict]:
+    return run_walk_room(STUDIO, sensor_range=3.2, sensor_fov_deg=110.0,
+                         ticks=450)
+
+
 def run_mini() -> tuple[TraceWriter, dict]:
     return run_room(MINI, sensor_range=2.5, sensor_fov_deg=120.0,
                     guide_ticks=1200)
@@ -192,7 +240,7 @@ def main() -> None:
 
     trace, summary = run_mini()
     golden_dir = root / "fixtures" / "golden"
-    trace.save(golden_dir / "mini-trace.jsonl")
+    trace.save(golden_dir / "mini-trace.jsonl", include_volatile=False)
     (golden_dir / "mini.sha256").write_text(trace.sha256() + "\n",
                                             encoding="utf-8")
     print("mini  :", json.dumps(summary))
@@ -203,7 +251,7 @@ def main() -> None:
     print("studio:", json.dumps(summary))
 
     trace, summary = run_mini_explore()
-    trace.save(golden_dir / "mini-explore-trace.jsonl")
+    trace.save(golden_dir / "mini-explore-trace.jsonl", include_volatile=False)
     (golden_dir / "mini-explore.sha256").write_text(trace.sha256() + "\n",
                                                    encoding="utf-8")
     print("mini-explore  :", json.dumps(summary))
@@ -212,7 +260,19 @@ def main() -> None:
     trace.save(root / "fixtures" / "demo" / "explore-trace.jsonl")
     trace.save(root / "tools" / "viewer" / "explore-trace.jsonl")
     print("studio-explore:", json.dumps(summary))
+
+    trace, summary = run_mini_walk()
+    trace.save(golden_dir / "mini-walk-trace.jsonl", include_volatile=False)
+    (golden_dir / "mini-walk.sha256").write_text(trace.sha256() + "\n",
+                                                 encoding="utf-8")
+    print("mini-walk     :", json.dumps(summary))
+
+    trace, summary = run_studio_walk()
+    trace.save(root / "fixtures" / "demo" / "walk-trace.jsonl")
+    trace.save(root / "tools" / "viewer" / "walk-trace.jsonl")
+    print("studio-walk   :", json.dumps(summary))
     print("view explore: /tools/viewer/index.html?trace=explore-trace.jsonl")
+    print("view walk   : /tools/viewer/index.html?trace=walk-trace.jsonl")
 
 
 if __name__ == "__main__":
