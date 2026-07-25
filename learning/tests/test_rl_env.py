@@ -39,7 +39,9 @@ def test_observation_shape_and_bounds():
 def test_determinism_same_seed_same_room_and_obs():
     a, _ = NavEnv(CURRICULUM["clutter"], seed=7).reset()
     b, _ = NavEnv(CURRICULUM["clutter"], seed=7).reset()
-    assert a == b
+    # list() so the assert works on both obs branches: plain list without
+    # gymnasium, numpy array with it (where bare == is elementwise)
+    assert list(a) == list(b)
     # different seeds must generate different ROOMS (the start view can
     # coincide when both near-fields are open, so compare geometry)
     room7, _ = make_room(7, **CURRICULUM["clutter"])

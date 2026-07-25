@@ -64,7 +64,15 @@ def run(args) -> tuple:
     sess = ort.InferenceSession(args.model,
                                 providers=["CPUExecutionProvider"])
     inp = sess.get_inputs()[0]
-    _, _, in_h, in_w = inp.shape if len(inp.shape) == 4 else (1, 1, 518, 518)
+    # Dynamic-axis exports (e.g. onnx-community DA-V2) carry string dims,
+    # not ints. 518 = 14*37 satisfies the ViT patch-size-multiple rule.
+    shape = inp.shape if len(inp.shape) == 4 else (1, 3, 518, 518)
+    in_h = shape[2] if isinstance(shape[2], int) else 518
+    in_w = shape[3] if isinstance(shape[3], int) else 518
+    # DA-V2 was trained on ImageNet-normalized input; raw /255 frames
+    # produce visibly mushy depth.
+    im_mean = np.array([0.485, 0.456, 0.406], dtype="float32")
+    im_std = np.array([0.229, 0.224, 0.225], dtype="float32")
 
     cap = cv2.VideoCapture(args.video)
     depths, sizes = [], None
@@ -77,6 +85,7 @@ def run(args) -> tuple:
             sizes = (frame.shape[1], frame.shape[0])
             img = cv2.resize(frame, (int(in_w), int(in_h)))
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype("float32") / 255.0
+            img = (img - im_mean) / im_std
             blob = img.transpose(2, 0, 1)[None]
             out = sess.run(None, {inp.name: blob})[0]
             depths.append(np.squeeze(out))
