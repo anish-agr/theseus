@@ -15,9 +15,11 @@ hallway", find the fridge by name.
 ## Status — M0 engine ✅ · M0.6 solvers ✅ · M0.5 ML lanes 🧪 (113 tests)
 
 Everything below runs on Windows with zero dependencies (the ML lanes'
-neural nets are optional extras — and the **inpainting UNet is already
-trained**: it beats the classical baseline on held-out rooms, acc 0.844
-vs 0.770). Full ledger: [docs/CHECKLIST.md](docs/CHECKLIST.md).
+neural nets are optional extras — and **two are already trained here**:
+the inpainting UNet beats its classical baseline on held-out rooms, acc
+0.844 vs 0.770, and the PPO steering policy beats the scripted baseline
+on held-out rooms, success 0.90 vs 0.60 at SPL 0.85 vs 0.60). Full
+ledger: [docs/CHECKLIST.md](docs/CHECKLIST.md).
 
 ```
 python -m pytest engine learning -q     # 113 tests

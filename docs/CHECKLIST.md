@@ -38,17 +38,18 @@ Status key: ✅ done & tested · 🧪 done offline, needs real input ·
 |---|---|---|
 | A — monocular depth → occupancy | 🧪 full pipeline + golden; runner ready | floor-fit, height-split, persistence, ingest all tested |
 | B — detection → named waypoints | 🧪 recovers objects to 1–3 cm, rejects ghosts; runner ready | demo_detect tests |
-| C — RL steering | ✅ env + curriculum + SPL harness + baseline tested · ⬜ PPO run (needs `pip install gymnasium stable-baselines3`) | learning/rl/ |
+| C — RL steering | ✅ **PPO trained (static stage), beats baseline on held-out rooms: success 0.90 vs 0.60, SPL 0.85 vs 0.60, half the steps** · movers stages next (warm-started curriculum) | learning/rl/ |
 | D — map inpainting | ✅ **UNet trained on this machine, beats baseline on held-out rooms: acc 0.844 vs 0.770, IoU_occ 0.587 vs 0.388** | learning/inpaint/ |
 
 ## What unblocks the remaining items
 
 1. **Footage** (you, ~15 min): docs/capture-footage.md. Unlocks Lanes
-   A/B on reality → the real-footage acceptance for M0.5.
-2. **`pip install -r learning/requirements.txt`** + a Depth-Anything-V2
-   ONNX download: unlocks run_depth/run_detect + PPO training (Lane C).
-3. **Mac** (weeks away): M1 Swift port — mechanical, against goldens,
+   A/B on reality → the real-footage acceptance for M0.5. Everything
+   else is staged: deps installed, DA-V2-Small ONNX + yolo11n.pt
+   downloaded (learning/models/, gitignored), both runners verified
+   end-to-end on a synthetic video (2026-07-24).
+2. **Mac** (weeks away): M1 Swift port — mechanical, against goldens,
    guide written (docs/PORT.md) — then ARKit shell + overlay.
-4. **iPhone 12 Pro+ loaner** (M2): LiDAR provider, RoomPlan rooms/doors.
-5. Nothing else. No other hardware, accounts, or services needed until
+3. **iPhone 12 Pro+ loaner** (M2): LiDAR provider, RoomPlan rooms/doors.
+4. Nothing else. No other hardware, accounts, or services needed until
    App-Store time.

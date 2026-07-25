@@ -34,8 +34,9 @@ against synthetic ground truth; what remains needs a real model + footage.
       baseline — all tested; PPO trainer wired (needs torch)
 - [x] Guarded real-model runners: `run_depth.py` (onnxruntime),
       `run_detect.py` (ultralytics)
-- [ ] Run DA-V2-S / YOLO11n on real footage (needs `requirements.txt`
-      install + a room video)
+- [ ] Run DA-V2-S / YOLO11n on real footage (deps installed + models
+      downloaded + runners verified on synthetic video 2026-07-24;
+      only the room video remains)
 - [ ] Record a phone video walkthrough of Anish's room as the standing
       test asset (Anish to capture)
 - Acceptance: a video of a room becomes a plausible occupancy slice +
@@ -83,10 +84,12 @@ against synthetic ground truth; what remains needs a real model + footage.
 
 ## M5 — Learned steering (RL)
 
-- [ ] Gymnasium env wrapping the engine sim (obs: 64×64 ego occupancy
-      crop + goal vector; discrete heading/speed actions)
-- [ ] PPO (stable-baselines3), curriculum static → movers; eval success
-      rate / SPL / jerk vs VFH
+- [x] Gymnasium env wrapping the engine sim (15×15 ego occupancy crop +
+      goal vector; 10 discrete heading/speed actions) — tested
+- [x] PPO (stable-baselines3) static stage — **trained 2026-07-24,
+      beats scripted baseline on held-out rooms: success 0.90 vs 0.60,
+      SPL 0.85 vs 0.60, 105 vs 192 steps**; movers stages next
+      (`--init` warm-start makes the curriculum real)
 - [ ] Core ML export behind `SteeringPolicy`; in-app A/B toggle
 - Acceptance: learned policy ≥ VFH on success rate in held-out rooms, and
   you can flip between them live in the HUD.

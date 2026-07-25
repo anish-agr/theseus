@@ -51,7 +51,8 @@ def policy_from_model(model):
     return _policy
 
 
-def train(stage: str, steps: int, seed: int, out: Path):
+def train(stage: str, steps: int, seed: int, out: Path,
+          init: str | None = None):
     _require()
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import SubprocVecEnv
@@ -59,8 +60,15 @@ def train(stage: str, steps: int, seed: int, out: Path):
     difficulty = CURRICULUM[stage]
     n_envs = 8
     venv = SubprocVecEnv([make_env(difficulty, seed + i) for i in range(n_envs)])
-    model = PPO("MlpPolicy", venv, verbose=1, n_steps=1024, batch_size=2048,
-                gae_lambda=0.95, gamma=0.99, ent_coef=0.005, seed=seed)
+    if init:
+        # warm start — what makes the curriculum a curriculum: the movers
+        # stages resume from the static-stage policy instead of relearning
+        # "walls are bad" from scratch
+        model = PPO.load(init, env=venv)
+    else:
+        model = PPO("MlpPolicy", venv, verbose=1, n_steps=1024,
+                    batch_size=2048, gae_lambda=0.95, gamma=0.99,
+                    ent_coef=0.005, seed=seed)
     model.learn(total_timesteps=steps)
     out.mkdir(parents=True, exist_ok=True)
     model.save(out / f"ppo_{stage}")
@@ -82,8 +90,10 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=300_000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="learning/rl/runs")
+    ap.add_argument("--init", help="saved model to warm-start from "
+                    "(e.g. learning/rl/runs/ppo_static)")
     args = ap.parse_args()
-    train(args.stage, args.steps, args.seed, Path(args.out))
+    train(args.stage, args.steps, args.seed, Path(args.out), init=args.init)
 
 
 if __name__ == "__main__":
