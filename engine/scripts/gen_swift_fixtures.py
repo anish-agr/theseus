@@ -282,6 +282,45 @@ def gen_astar() -> None:
     path = OUT / "AstarParity.swift"
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"wrote {path}")
+    gen_fsm()
+
+
+def gen_fsm() -> None:
+    """FSM parity: exhaustive (state, event) enumeration — can() plus the
+    resulting state for every legal pair — and one long scripted journey
+    that exercises the tracking-lost resume path."""
+    from theseus_engine.fsm import Event, State, StateMachine
+
+    combos = []
+    for s in State:
+        for e in Event:
+            m = StateMachine(initial=s)
+            ok = m.can(e)
+            nxt = ""
+            if ok:
+                nxt = m.step(e).value
+            combos.append(f"(\"{s.value}\", \"{e.value}\", "
+                          f"{str(ok).lower()}, \"{nxt}\")")
+
+    journey = [Event.SCAN_STARTED, Event.TRACKING_LOST,
+               Event.TRACKING_RECOVERED, Event.GOAL_SET, Event.PLAN_READY,
+               Event.OFF_ROUTE, Event.PLAN_FAILED, Event.RETRY,
+               Event.PLAN_READY, Event.ARRIVED_EVT, Event.WALK_TOGGLED,
+               Event.TRACKING_LOST, Event.TRACKING_RECOVERED,
+               Event.WALK_TOGGLED]
+    m = StateMachine()
+    script = ", ".join(f"(\"{e.value}\", \"{m.step(e).value}\")"
+                       for e in journey)
+
+    lines = [
+        HEADER,
+        "let fsmCombos: [(String, String, Bool, String)] = ["
+        + ", ".join(combos) + "]\n",
+        f"let fsmJourney: [(String, String)] = [{script}]\n",
+    ]
+    path = OUT / "FsmParity.swift"
+    path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    print(f"wrote {path}")
 
 
 if __name__ == "__main__":
