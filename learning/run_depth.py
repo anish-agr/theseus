@@ -75,7 +75,7 @@ def run(args) -> tuple:
     im_std = np.array([0.229, 0.224, 0.225], dtype="float32")
 
     cap = cv2.VideoCapture(args.video)
-    depths, sizes = [], None
+    depths, srcs, sizes = [], [], None
     idx = 0
     while True:
         ok, frame = cap.read()
@@ -89,13 +89,20 @@ def run(args) -> tuple:
             blob = img.transpose(2, 0, 1)[None]
             out = sess.run(None, {inp.name: blob})[0]
             depths.append(np.squeeze(out))
+            srcs.append(idx)
         idx += 1
     cap.release()
     if not depths:
         sys.exit("[run_depth] no frames read from --video")
 
     w_px, h_px = sizes
-    k = Intrinsics.from_fov(w_px, h_px, args.hfov)
+    if args.intrinsics:
+        fx, fy, cx, cy = (float(v) for v in args.intrinsics.split(","))
+        k = Intrinsics(fx, fy, cx, cy)
+    else:
+        k = Intrinsics.from_fov(w_px, h_px, args.hfov)
+    sparse = (json.loads(Path(args.sparse).read_text())
+              if args.sparse else None)
     poses = load_poses(args.poses, len(depths), args)
     grid = OccupancyGrid.from_meters(args.map_w, args.map_h, args.cell,
                                      origin=(args.origin_x, args.origin_y))
@@ -104,12 +111,27 @@ def run(args) -> tuple:
     filt = PersistenceFilter(hits_needed=2, window=6)
 
     frames = []
-    for depth, pose in zip(depths, poses):
+    for depth, pose, src in zip(depths, poses, srcs):
         d = np.asarray(depth, dtype="float32")
         d = cv2.resize(d, (w_px, h_px)) if d.shape != (h_px, w_px) else d
-        if args.inverse_depth:
+        if sparse is not None and src < len(sparse) and len(sparse[src]) >= 8:
+            # Metric alignment: a relative-depth net's output r is affine
+            # in INVERSE depth (scale AND shift are both free), so fit
+            # 1/z = s*r + t against this frame's sparse ground-truth
+            # samples and invert. At M4 on-device, ARKit's sparse feature
+            # points play exactly this role — this is a rehearsal of the
+            # production scale-recovery path, not a shortcut.
+            samp = sparse[src]
+            r = np.array([d[v, u] for u, v, _z in samp], dtype="float32")
+            inv = np.array([1.0 / z for _u, _v, z in samp], dtype="float32")
+            a_mat = np.stack([r, np.ones_like(r)], axis=1)
+            (s, t), *_ = np.linalg.lstsq(a_mat, inv, rcond=None)
+            inv_pred = s * d + t
+            d = np.where(inv_pred > 1e-6, 1.0 / np.clip(inv_pred, 1e-6, None),
+                         0.0).astype("float32")
+        elif args.inverse_depth:
             d = 1.0 / np.clip(d, 1e-3, None)
-        if not args.metric:
+        if not args.metric and sparse is None:
             d = d * args.depth_scale
         rows = d.tolist()
         pts = depth_to_points(rows, k, pose, stride=args.point_stride,
@@ -129,6 +151,10 @@ def main() -> None:
     ap.add_argument("--video", required=True)
     ap.add_argument("--model", required=True, help="ONNX depth model")
     ap.add_argument("--poses", help="JSON [[x,y,height,yaw,pitch], ...] per frame")
+    ap.add_argument("--sparse", help="JSON [[[u,v,z_m],...],...] per source "
+                    "frame: ground-truth depth samples for metric alignment "
+                    "(what ARKit feature points provide on-device)")
+    ap.add_argument("--intrinsics", help="fx,fy,cx,cy (overrides --hfov)")
     ap.add_argument("--hfov", type=float, default=68.0)
     ap.add_argument("--stride", type=int, default=5, help="use every Nth frame")
     ap.add_argument("--point-stride", type=int, default=2)

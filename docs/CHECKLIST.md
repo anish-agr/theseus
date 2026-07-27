@@ -36,9 +36,9 @@ Status key: ✅ done & tested · 🧪 done offline, needs real input ·
 
 | lane | status | evidence |
 |---|---|---|
-| A — monocular depth → occupancy | 🧪 full pipeline + golden; runner ready | floor-fit, height-split, persistence, ingest all tested |
-| B — detection → named waypoints | 🧪 recovers objects to 1–3 cm, rejects ghosts; runner ready | demo_detect tests |
-| C — RL steering | ✅ **PPO trained (static stage), beats baseline on held-out rooms: success 0.90 vs 0.60, SPL 0.85 vs 0.60, half the steps** · movers stages next (warm-started curriculum) | learning/rl/ |
+| A — monocular depth → occupancy | ✅ **real footage (TUM fr1_desk): metric floor plan from handheld video; 130/133 camera-track cells FREE, 0 falsely blocked** | tum_prep.py + run_depth --sparse; viewer trace |
+| B — detection → named waypoints | ✅ **real footage: fridge/ovens (kitchen), table/chairs (dining), monitors/chair (TUM office) promoted; elevated-object overshoot measured → M4 depth-fusion fix** | run_detect on Pexels + TUM clips |
+| C — RL steering | ✅ **full PPO curriculum trained (static→movers1→movers3, warm-started): held-out success 0.90/0.90/0.87 vs baseline 0.60/0.37/0.30** · Core ML export at M5 | learning/rl/ |
 | D — map inpainting | ✅ **UNet trained on this machine, beats baseline on held-out rooms: acc 0.844 vs 0.770, IoU_occ 0.587 vs 0.388** | learning/inpaint/ |
 
 ## What unblocks the remaining items

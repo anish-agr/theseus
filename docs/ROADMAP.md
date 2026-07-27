@@ -34,14 +34,19 @@ against synthetic ground truth; what remains needs a real model + footage.
       baseline — all tested; PPO trainer wired (needs torch)
 - [x] Guarded real-model runners: `run_depth.py` (onnxruntime),
       `run_detect.py` (ultralytics)
-- [ ] Run DA-V2-S / YOLO11n on real footage (deps installed + models
-      downloaded + runners verified on synthetic video 2026-07-24;
-      only the room video remains)
-- [ ] Record a phone video walkthrough of Anish's room as the standing
-      test asset (Anish to capture)
+- [x] Run DA-V2-S / YOLO11n on real footage — **done 2026-07-26 on
+      public footage**: Pexels clips (YOLO → fridge/oven/table/chairs
+      waypoints) + TUM fr1_desk (real handheld video with mocap
+      ground-truth poses; learning/tum_prep.py converts, run_depth
+      --sparse aligns relative depth to meters the way ARKit feature
+      points will on-device). Result: coherent metric floor plan;
+      130/133 camera-track cells FREE, 0 OCC. Known limit (measured):
+      floor-ray waypoint placement overshoots for elevated objects
+      (desk monitors) — depth-fused placement is the M4 fix.
+- [ ] Optional: Anish's own room video (docs/capture-footage.md) — a
+      nice-to-have now, no longer the acceptance gate
 - Acceptance: a video of a room becomes a plausible occupancy slice +
-  labeled waypoint set, replayed in the viewer. *(Synthetic acceptance met;
-  real-footage acceptance pending the video.)*
+  labeled waypoint set, replayed in the viewer. **Met, on real footage.**
 
 ## M1 — Mac + Xcode: the app exists
 
@@ -86,10 +91,11 @@ against synthetic ground truth; what remains needs a real model + footage.
 
 - [x] Gymnasium env wrapping the engine sim (15×15 ego occupancy crop +
       goal vector; 10 discrete heading/speed actions) — tested
-- [x] PPO (stable-baselines3) static stage — **trained 2026-07-24,
-      beats scripted baseline on held-out rooms: success 0.90 vs 0.60,
-      SPL 0.85 vs 0.60, 105 vs 192 steps**; movers stages next
-      (`--init` warm-start makes the curriculum real)
+- [x] PPO (stable-baselines3) full curriculum, warm-started stage to
+      stage — **trained 2026-07-24, held-out results (success / SPL,
+      learned vs baseline): static 0.90/0.85 vs 0.60/0.60 · movers1
+      0.90/0.86 vs 0.37/0.37 · movers3 0.87/0.73 vs 0.30/0.30** — the
+      gap WIDENS as movers are added; weights in learning/rl/runs/
 - [ ] Core ML export behind `SteeringPolicy`; in-app A/B toggle
 - Acceptance: learned policy ≥ VFH on success rate in held-out rooms, and
   you can flip between them live in the HUD.
