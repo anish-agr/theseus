@@ -321,6 +321,68 @@ def gen_fsm() -> None:
     path = OUT / "FsmParity.swift"
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"wrote {path}")
+    gen_dstar()
+
+
+def gen_dstar() -> None:
+    """D* Lite parity: a scripted scenario of world edits and agent moves
+    on the navigable grid. After every step the incremental planner's
+    cost must equal a fresh A* plan (asserted here, re-checked in Swift
+    against the SWIFT A* — the equivalence property, cross-language)."""
+    from theseus_engine import astar
+    from theseus_engine.dstar_lite import DStarLite
+    import math as m
+
+    grid = OccupancyGrid(12, 10, 0.05, origin=(-0.3, -0.2))
+    grid.clearance_cap = 1.2
+    for x, y, occ in _nav_ops():
+        grid.observe((x, y), occ)
+    params = PlanParams(radius=0.05, safe_margin=0.15, margin_weight=1.5)
+    start, goal = (0, 0), (11, 9)
+    ds = DStarLite(grid, start, goal, params)
+
+    # (cell writes as (x, y, state), move-start-to or None)
+    script = [
+        ([], None),                          # initial plan
+        ([(4, 7, 2), (4, 8, 2)], None),      # top gap narrows to one row
+        ([], (1, 1)),                        # agent advances
+        ([(4, 3, 1)], None),                 # hole punched mid-wall
+        ([(5, 9, 2)], (2, 2)),               # clutter appears; agent moves
+        ([(8, 2, 2)], None),                 # bottom gap narrows
+        ([(4, 7, 1), (4, 8, 1)], (3, 3)),    # top gap reopens; agent moves
+        ([(4, 9, 2)], None),                 # top gap CLOSES entirely
+    ]
+    steps = []
+    for writes, move in script:
+        changed = []
+        for x, y, st in writes:
+            grid.set_state((x, y), st)
+            changed.append((x, y))
+        if changed:
+            ds.notify_changed(changed)
+        if move is not None:
+            ds.update_start(move)
+        res = ds.plan()
+        ref = astar.plan(grid, ds.start, goal, params)
+        if res is None:
+            assert ref is None, f"D* None but A* found a path: {writes}"
+            want = INF
+        else:
+            assert ref is not None and abs(res.cost - ref.cost) < 1e-9, \
+                f"D* != A* after {writes}: {res.cost} vs {ref and ref.cost}"
+            want = res.cost
+        mv = move if move is not None else (-99, -99)
+        w = "[" + ", ".join(f"({x}, {y}, {st})" for x, y, st in writes) + "]"
+        steps.append(f"({w}, {_cell(mv)}, {lit(want)})")
+
+    lines = [
+        HEADER,
+        "let dstarSteps: [([(Int32, Int32, Int)], Cell, Double)] = ["
+        + ", ".join(steps) + "]\n",
+    ]
+    path = OUT / "DstarParity.swift"
+    path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    print(f"wrote {path}")
 
 
 if __name__ == "__main__":

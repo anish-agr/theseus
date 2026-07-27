@@ -9,6 +9,7 @@ struct BinaryHeap<Element: Comparable> {
 
     var isEmpty: Bool { storage.isEmpty }
     var count: Int { storage.count }
+    var min: Element? { storage.first }
 
     init() {}
 
