@@ -28,3 +28,6 @@ Thumbs.db
 # Xcode (from milestone M1 on)
 apps/ios/**/xcuserdata/
 apps/ios/**/DerivedData/
+
+# SwiftPM build output
+apps/navcore/.build/

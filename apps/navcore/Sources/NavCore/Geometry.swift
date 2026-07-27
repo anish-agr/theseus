@@ -31,6 +31,32 @@ public struct Cell: Hashable, Sendable {
 }
 
 public let SQRT2: Double = 2.0.squareRoot()
+public let INF: Double = .infinity
+
+/// Python's float floor division (a // b), ported from CPython's
+/// float_divmod. NOT equivalent to (a / b).rounded(.down): IEEE division
+/// rounds the quotient to nearest double FIRST, so 0.5 / 0.05 is exactly
+/// 10.0 and flooring it gives 10 — while Python's fmod-based algorithm
+/// gives 9. The engine's world_to_cell inherits Python's semantics at
+/// cell boundaries; the parity fixtures caught this divergence live.
+public func pythonFloorDiv(_ a: Double, _ b: Double) -> Double {
+    var mod = fmod(a, b)
+    var div = (a - mod) / b
+    if mod != 0.0 {
+        if (b < 0) != (mod < 0) {
+            mod += b
+            div -= 1.0
+        }
+    }
+    if div != 0.0 {
+        let floordiv = div.rounded(.down)
+        if div - floordiv > 0.5 {
+            return floordiv + 1.0
+        }
+        return floordiv
+    }
+    return Double(signOf: a / b, magnitudeOf: 0.0)
+}
 
 public func dist(_ a: Vec, _ b: Vec) -> Double {
     hypot(b.x - a.x, b.y - a.y)

@@ -23,6 +23,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from theseus_engine import geometry as g  # noqa: E402
+from theseus_engine.grid import OccupancyGrid, PlanParams  # noqa: E402
 
 OUT = (pathlib.Path(__file__).resolve().parents[2]
        / "apps" / "navcore" / "Tests" / "NavCoreTests")
@@ -101,6 +102,86 @@ def main() -> None:
 
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / "GeometryParity.swift"
+    path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    print(f"wrote {path}")
+    gen_grid()
+
+
+def gen_grid() -> None:
+    """Grid parity: a deterministic observation script plus every derived
+    number (states, clearance, costs). Grid math is libm-free, so ALL of
+    these must match bit-for-bit in Swift — comparisons are ==, no
+    tolerance."""
+    grid = OccupancyGrid(12, 10, 0.05, origin=(-0.3, -0.2))
+    grid.clearance_cap = 1.2
+    params = PlanParams(radius=0.05, safe_margin=0.15, margin_weight=1.5)
+
+    ops = []
+    s = 12345
+    for k in range(240):
+        s = (s * 1103515245 + 12345) % (1 << 31)
+        x = s % 12
+        s = (s * 1103515245 + 12345) % (1 << 31)
+        y = s % 10
+        occ = (s >> 7) % 4 == 0
+        label = "box" if occ and k % 17 == 0 else ""
+        ops.append((x, y, occ, k, label))
+    changed = [grid.observe((x, y), o, tick=t, label=lab)
+               for x, y, o, t, lab in ops]
+
+    cells = [(x, y) for y in range(10) for x in range(12)]
+    states = "".join(str(grid.state(c)) for c in cells)
+    clear = ", ".join(lit(grid.clearance(c)) for c in cells)
+    costs = ", ".join(lit(grid.cell_cost(c, params)) for c in cells)
+
+    edge_pairs = [((1, 1), (2, 1)), ((1, 1), (2, 2)), ((5, 5), (5, 6)),
+                  ((5, 5), (6, 6)), ((0, 0), (-1, 0)), ((11, 9), (11, 8)),
+                  ((3, 7), (4, 8)), ((8, 2), (7, 1)), ((6, 4), (6, 3)),
+                  ((2, 8), (3, 8)), ((9, 6), (10, 7)), ((4, 3), (3, 4))]
+    edges = ", ".join(
+        f"(Cell({a[0]}, {a[1]}), Cell({b[0]}, {b[1]}), "
+        f"{lit(grid.edge_cost(a, b, params))})" for a, b in edge_pairs)
+
+    w2c = [(-0.3, -0.2), (-0.301, -0.201), (0.0, 0.0), (-0.25, -0.15),
+           (0.299, 0.299), (-0.5, 0.3), (0.3, -0.4)]
+    w2c_cases = ", ".join(
+        f"(Vec({lit(p[0])}, {lit(p[1])}), "
+        f"Cell({grid.world_to_cell(p)[0]}, {grid.world_to_cell(p)[1]}))"
+        for p in w2c)
+
+    fm = [(0.425, 0.475, 0.05), (0.375, 0.325, 0.05), (8.0, 6.0, 0.05),
+          (1.25, 0.75, 0.1)]
+    fm_cases = ", ".join(
+        f"({lit(w)}, {lit(h)}, {lit(c)}, "
+        f"{OccupancyGrid.from_meters(w, h, c).width}, "
+        f"{OccupancyGrid.from_meters(w, h, c).height})" for w, h, c in fm)
+
+    mca = [((-0.25, -0.15), (0.2, 0.25)), ((0.0, 0.0), (0.25, -0.1))]
+    mca_cases = ", ".join(
+        f"(Vec({lit(a[0])}, {lit(a[1])}), Vec({lit(b[0])}, {lit(b[1])}), "
+        f"{lit(grid.min_clearance_along(a, b))})" for a, b in mca)
+
+    labeled = sorted((i, lab) for i, lab in grid.labels.items())
+    label_cases = ", ".join(f"({i}, \"{lab}\")" for i, lab in labeled)
+
+    lines = [
+        HEADER,
+        "let gridOps: [(Int32, Int32, Bool, Int, String)] = ["
+        + ", ".join(f"({x}, {y}, {str(o).lower()}, {t}, \"{lab}\")"
+                    for x, y, o, t, lab in ops) + "]\n",
+        "let gridChanged: [Bool] = ["
+        + ", ".join(str(c).lower() for c in changed) + "]\n",
+        f"let gridStates = \"{states}\"\n",
+        f"let gridClearance: [Double] = [{clear}]\n",
+        f"let gridCellCosts: [Double] = [{costs}]\n",
+        f"let gridEdgeCases: [(Cell, Cell, Double)] = [{edges}]\n",
+        f"let worldToCellCases: [(Vec, Cell)] = [{w2c_cases}]\n",
+        "let fromMetersCases: [(Double, Double, Double, Int, Int)] = "
+        f"[{fm_cases}]\n",
+        f"let minClearanceCases: [(Vec, Vec, Double)] = [{mca_cases}]\n",
+        f"let gridLabels: [(Int, String)] = [{label_cases}]\n",
+    ]
+    path = OUT / "GridParity.swift"
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"wrote {path}")
 
