@@ -1,0 +1,29 @@
+# CI — runs free on GitHub's cloud machines for public repos.
+# Two jobs: the Python reference suite (engine only: those tests are
+# stdlib-pure and hermetic; learning/ tests run locally where the ML
+# deps live) and the Swift port built + tested on Linux, proving
+# NavCore stays portable with zero Apple hardware involved.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - run: python -m pytest engine -q
+
+  navcore:
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path apps/navcore

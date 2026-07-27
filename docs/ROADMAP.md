@@ -50,9 +50,14 @@ against synthetic ground truth; what remains needs a real model + footage.
 
 ## M1 — Mac + Xcode: the app exists
 
+*(The NavCore port itself needs NO Mac — Swift-on-Windows, see
+docs/NO-MAC.md. Started 2026-07-26: apps/navcore with geometry ported
+and parity-tested against Python-generated fixtures; CI builds it on
+Linux every push.)*
+
 - [ ] Xcode project skeleton (SwiftUI + RealityKit + ARKit session mgmt)
-- [ ] Port engine to Swift package `NavCore`, module-by-module, tests
-      first; golden scenario hashes reproduced
+- [~] Port engine to Swift package `NavCore`, module-by-module, tests
+      first; golden scenario hashes reproduced — geometry ✅, grid next
 - [ ] XR provider: plane detection + filtered feature points → grid
 - [ ] Diagnostic overlay v0: grid decal + path + agent on camera feed
 - [ ] On-device trace recorder (same JSONL schema)
