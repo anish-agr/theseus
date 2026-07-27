@@ -107,15 +107,12 @@ def main() -> None:
     gen_grid()
 
 
-def gen_grid() -> None:
-    """Grid parity: a deterministic observation script plus every derived
-    number (states, clearance, costs). Grid math is libm-free, so ALL of
-    these must match bit-for-bit in Swift — comparisons are ==, no
-    tolerance."""
+def _built_grid():
+    """The shared scripted grid: a fixed pseudo-random observation
+    sequence, so every parity battery (grid, astar, ...) exercises the
+    same world."""
     grid = OccupancyGrid(12, 10, 0.05, origin=(-0.3, -0.2))
     grid.clearance_cap = 1.2
-    params = PlanParams(radius=0.05, safe_margin=0.15, margin_weight=1.5)
-
     ops = []
     s = 12345
     for k in range(240):
@@ -128,6 +125,16 @@ def gen_grid() -> None:
         ops.append((x, y, occ, k, label))
     changed = [grid.observe((x, y), o, tick=t, label=lab)
                for x, y, o, t, lab in ops]
+    return grid, ops, changed
+
+
+def gen_grid() -> None:
+    """Grid parity: a deterministic observation script plus every derived
+    number (states, clearance, costs). Grid math is libm-free, so ALL of
+    these must match bit-for-bit in Swift — comparisons are ==, no
+    tolerance."""
+    grid, ops, changed = _built_grid()
+    params = PlanParams(radius=0.05, safe_margin=0.15, margin_weight=1.5)
 
     cells = [(x, y) for y in range(10) for x in range(12)]
     states = "".join(str(grid.state(c)) for c in cells)
@@ -182,6 +189,97 @@ def gen_grid() -> None:
         f"let gridLabels: [(Int, String)] = [{label_cases}]\n",
     ]
     path = OUT / "GridParity.swift"
+    path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    print(f"wrote {path}")
+    gen_astar()
+
+
+def _cell(c) -> str:
+    return f"Cell({c[0]}, {c[1]})"
+
+
+def _vec(p) -> str:
+    return f"Vec({lit(p[0])}, {lit(p[1])})"
+
+
+def _nav_ops():
+    """Observation script for a NAVIGABLE world (the messy grid parity
+    world is 80% unknown — fine for cost parity, useless for routing):
+    carve everything free (twice — log-odds needs two misses to cross
+    the FREE threshold), then two walls with offset gaps, forcing an
+    S-shaped route corner to corner."""
+    ops = []
+    for _ in range(2):
+        for y in range(10):
+            for x in range(12):
+                ops.append((x, y, False))
+    walls = ([(4, y) for y in range(0, 7)]        # gap at the top
+             + [(8, y) for y in range(3, 10)]     # gap at the bottom
+             + [(1, 5), (2, 5)])
+    # three hits: the free carving drove these to log-odds -1.2, and
+    # crossing the OCCUPIED threshold (+0.7) needs +0.85 * 3 from there
+    for _ in range(3):
+        for c in walls:
+            ops.append((c[0], c[1], True))
+    return ops
+
+
+def gen_astar() -> None:
+    """A* parity: full planned paths (exact cell sequences — identical
+    tie-breaking makes them deterministic), costs, the Dijkstra oracle
+    agreement, smoothing output and corridor checks."""
+    from theseus_engine import astar
+
+    grid = OccupancyGrid(12, 10, 0.05, origin=(-0.3, -0.2))
+    grid.clearance_cap = 1.2
+    nav_ops = _nav_ops()
+    for x, y, occ in nav_ops:
+        grid.observe((x, y), occ)
+    params = PlanParams(radius=0.05, safe_margin=0.15, margin_weight=1.5)
+
+    pair_picks = [((0, 0), (11, 9)), ((0, 9), (11, 0)), ((0, 0), (11, 0)),
+                  ((2, 2), (2, 8)), ((6, 1), (6, 8)), ((3, 3), (3, 3))]
+    plan_cases, smooth_cases = [], []
+    for start, goal in pair_picks:
+        res = astar.plan(grid, start, goal, params)
+        assert res is not None, f"nav grid should connect {start}->{goal}"
+        dij = astar.plan(grid, start, goal, params, use_heuristic=False)
+        assert dij is not None and abs(dij.cost - res.cost) < 1e-9, \
+            f"A* not optimal for {start}->{goal}?!"
+        cells = "[" + ", ".join(_cell(c) for c in res.cells) + "]"
+        plan_cases.append(f"({_cell(start)}, {_cell(goal)}, {cells}, "
+                          f"{lit(res.cost)})")
+        sm = astar.smooth(grid, res.cells, params)
+        smooth_cases.append("[" + ", ".join(_vec(p) for p in sm) + "]")
+
+    occ_cells = [(x, y) for y in range(10) for x in range(12)
+                 if grid.state((x, y)) == 2]
+    unreachable = [((0, 0), occ_cells[0]), (occ_cells[0], (0, 0)),
+                   ((-1, 0), (0, 0))]
+    unreach = ", ".join(f"({_cell(a)}, {_cell(b)})" for a, b in unreachable)
+
+    corr = [((-0.25, -0.15), (0.2, 0.25)), ((-0.28, -0.18), (-0.1, 0.0)),
+            ((0.0, 0.0), (0.25, 0.28)), ((-0.2, 0.1), (0.15, 0.1))]
+    corr_cases = ", ".join(
+        f"({_vec(a)}, {_vec(b)}, "
+        f"{str(astar.corridor_clear(grid, a, b, params)).lower()})"
+        for a, b in corr)
+
+    bad = [(0, 0), occ_cells[0]]
+    nav_ops_lit = ", ".join(f"({x}, {y}, {str(o).lower()})"
+                            for x, y, o in nav_ops)
+    lines = [
+        HEADER,
+        f"let navOps: [(Int32, Int32, Bool)] = [{nav_ops_lit}]\n",
+        "let planCases: [(Cell, Cell, [Cell], Double)] = ["
+        + ", ".join(plan_cases) + "]\n",
+        "let smoothCases: [[Vec]] = [" + ", ".join(smooth_cases) + "]\n",
+        f"let unreachableCases: [(Cell, Cell)] = [{unreach}]\n",
+        f"let corridorCases: [(Vec, Vec, Bool)] = [{corr_cases}]\n",
+        "let badPath: [Cell] = ["
+        + ", ".join(_cell(c) for c in bad) + "]\n",
+    ]
+    path = OUT / "AstarParity.swift"
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"wrote {path}")
 
