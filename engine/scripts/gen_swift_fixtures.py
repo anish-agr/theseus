@@ -383,6 +383,46 @@ def gen_dstar() -> None:
     path = OUT / "DstarParity.swift"
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"wrote {path}")
+    gen_flowfield()
+
+
+def gen_flowfield() -> None:
+    """Flow-field parity on the navigable grid: the full single-goal
+    distance field (bit-exact — heap tie-breaks are fully ordered), a
+    multi-goal sample, and greedy-descent routes."""
+    from theseus_engine.flowfield import FlowField
+
+    grid = OccupancyGrid(12, 10, 0.05, origin=(-0.3, -0.2))
+    grid.clearance_cap = 1.2
+    for x, y, occ in _nav_ops():
+        grid.observe((x, y), occ)
+    params = PlanParams(radius=0.05, safe_margin=0.15, margin_weight=1.5)
+
+    ff = FlowField.build(grid, [(11, 9)], params)
+    dist_a = ", ".join(lit(ff.distance((x, y)))
+                       for y in range(10) for x in range(12))
+
+    ffb = FlowField.build(grid, [(0, 0), (11, 0)], params)
+    dist_b = ", ".join(lit(ffb.distance((x, y)))
+                       for y in range(10) for x in range(12))
+
+    routes = []
+    for s in [(0, 0), (0, 9), (6, 1)]:
+        r = ff.route_from(s)
+        assert r is not None
+        cells = "[" + ", ".join(_cell(c) for c in r.cells) + "]"
+        routes.append(f"({_cell(s)}, {cells}, {lit(r.cost)})")
+
+    lines = [
+        HEADER,
+        f"let ffDistSingle: [Double] = [{dist_a}]\n",
+        f"let ffDistMulti: [Double] = [{dist_b}]\n",
+        "let ffRoutes: [(Cell, [Cell], Double)] = ["
+        + ", ".join(routes) + "]\n",
+    ]
+    path = OUT / "FlowFieldParity.swift"
+    path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    print(f"wrote {path}")
 
 
 if __name__ == "__main__":
