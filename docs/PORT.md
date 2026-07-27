@@ -42,10 +42,13 @@ is a bug in the port until proven otherwise.
    on most values but not certainly on all formatting (exponents etc.).
    The byte-hash goldens remain the Python-side regression; the port's
    contract is: same frames, same numbers, same order.
-3. **Floor division.** `world_to_cell` uses Python `//` (floor). Swift
-   integer conversion truncates toward zero — use
-   `Int((p.x / cell).rounded(.down))`. Negative coordinates will bite
-   you exactly once if you forget.
+3. **Floor division.** `world_to_cell` uses Python `//`, which is
+   neither Swift truncation NOR `floor(a / b)`: IEEE division rounds
+   the quotient to nearest double first, so `floor(0.5 / 0.05)` is 10
+   while Python `0.5 // 0.05` is 9 (fmod-based algorithm). Measured
+   live by the parity fixtures on 2026-07-26. Use
+   `pythonFloorDiv` (Geometry.swift) — a port of CPython's
+   float_divmod — anywhere the Python does `//` on floats.
 4. **Iteration order.** Python dicts iterate in insertion order and the
    code exploits determinism everywhere (sorted seeds in frontier
    clustering, `neighbors8` fixed offset order, seq tie-breaks in

@@ -57,7 +57,9 @@ Linux every push.)*
 
 - [ ] Xcode project skeleton (SwiftUI + RealityKit + ARKit session mgmt)
 - [~] Port engine to Swift package `NavCore`, module-by-module, tests
-      first; golden scenario hashes reproduced — geometry ✅, grid next
+      first; golden scenario hashes reproduced — geometry + grid ✅
+      (bit-exact vs Python on Windows, incl. the canonical cost model
+      and clearance transform), astar next
 - [ ] XR provider: plane detection + filtered feature points → grid
 - [ ] Diagnostic overlay v0: grid decal + path + agent on camera feed
 - [ ] On-device trace recorder (same JSONL schema)
