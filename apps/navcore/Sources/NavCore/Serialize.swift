@@ -17,6 +17,18 @@ public struct GridSnapshot: Sendable {
     public var origin: Vec
     public var states: [Int]          // RLE pairs: state, run, state, run…
     public var labels: [Int: String]
+
+    public init(schema: String = GRID_SCHEMA, w: Int, h: Int,
+                cell: Double, origin: Vec, states: [Int],
+                labels: [Int: String]) {
+        self.schema = schema
+        self.w = w
+        self.h = h
+        self.cell = cell
+        self.origin = origin
+        self.states = states
+        self.labels = labels
+    }
 }
 
 public func toSnapshot(_ grid: OccupancyGrid) -> GridSnapshot {

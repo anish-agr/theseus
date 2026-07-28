@@ -11,7 +11,7 @@ struct GuidanceView: View {
 
     var body: some View {
         ZStack {
-            background.ignoresSafeArea()
+            Rectangle().fill(background).ignoresSafeArea()
             VStack(spacing: 20) {
                 Spacer()
                 Image(systemName: arrowName)
