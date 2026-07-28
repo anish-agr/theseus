@@ -1,39 +1,39 @@
 // NavEngine — the app-side owner of the ported NavCore stack: the
-// shared occupancy grid, D* Lite, guidance, FSM, and the trace
-// recorder. ARSessionManager feeds it observations; the UI reads its
-// published state. v0 runs on the main actor with throttled heavy work
-// (clearance refresh ~1 Hz, planning ~5 Hz on a 240x240 grid — cheap);
-// the full actor pipeline is the M1.5 refinement.
+// shared occupancy grid, D* Lite routing, guidance cues and the trace
+// recorder. ARSessionManager feeds it observations; SwiftUI reads its
+// published state.
+//
+// Coordinate mapping, fixed once here: ARKit is x right / y up / z
+// toward the viewer. The floor plan uses the engine convention (+y up
+// in a top-down view), so plan-x = ARKit x and plan-y = -ARKit z.
 import Combine
 import Foundation
 import NavCore
-
-// World mapping: ARKit x right / y up / z toward viewer. Floor plan:
-// our x = ARKit x, our y = -ARKit z (so +y is "away from you at session
-// start"), matching the engine's +y-up top-down convention.
+import SwiftData
 
 @MainActor
 final class NavEngine: ObservableObject {
-    // 12 x 12 m, 5 cm cells, session origin at the center
-    static let mapSide = 12.0
+    static let mapSide = 14.0        // metres per room map
     static let cell = 0.05
 
-    let grid: OccupancyGrid
+    private(set) var grid: OccupancyGrid
     let params = PlanParams(radius: 0.30, safeMargin: 0.5,
                             marginWeight: 1.2)
     let fsm = StateMachine()
 
-    @Published var mode: Mode = .scan
     @Published var pose: (x: Double, y: Double, heading: Double) = (0, 0, 0)
     @Published var cue: GuidanceCue?
     @Published var goal: Vec?
+    @Published var goalName: String = ""
     @Published var smoothedPath: [Vec] = []
     @Published var trackingLimited = false
-    @Published var freeCells = 0
-    @Published var occupiedCells = 0
-    @Published var statusLine = "Point the phone at the floor and sweep"
+    @Published var isGuiding = false
+    @Published var coverage: Double = 0
+    @Published var floorAreaM2: Double = 0
+    @Published var scanHint: String = "Sweep the phone slowly across the floor"
+    @Published var statusLine = ""
     @Published var recording = false
-    @Published var agentPos: Vec?
+    @Published var gridRevision = 0     // bumped so the minimap redraws
 
     private var dstar: DStarLite?
     private var follower: GuidanceFollower?
@@ -42,30 +42,41 @@ final class NavEngine: ObservableObject {
     private var clearanceAge = 0
     private var trace: TraceWriter?
     private var traceTick = 0
-    private var agentHeading = 0.0
-    private let agentSteer: VFHSteering
-
-    enum Mode: String {
-        case scan = "Scan"
-        case guide = "Guide"
-        case agent = "Agent"
-    }
 
     init() {
-        grid = OccupancyGrid(
-            width: Int(NavEngine.mapSide / NavEngine.cell),
-            height: Int(NavEngine.mapSide / NavEngine.cell),
-            cellSize: NavEngine.cell,
-            origin: Vec(-NavEngine.mapSide / 2, -NavEngine.mapSide / 2))
-        grid.clearanceCap = 1.2
-        grid.autoClearance = false
-        var opt = params
-        opt.unknownOk = true
-        agentSteer = VFHSteering(params: opt)
-        try? fsm.step(.scanStarted)
+        grid = NavEngine.makeGrid()
     }
 
-    // ---- observations from ARSessionManager ------------------------------
+    private static func makeGrid() -> OccupancyGrid {
+        let g = OccupancyGrid(
+            width: Int(mapSide / cell), height: Int(mapSide / cell),
+            cellSize: cell,
+            origin: Vec(-mapSide / 2, -mapSide / 2))
+        g.clearanceCap = 1.2
+        g.autoClearance = false
+        return g
+    }
+
+    // ---- room lifecycle --------------------------------------------------
+
+    func resetForNewRoom() {
+        grid = NavEngine.makeGrid()
+        clearGuidance()
+        coverage = 0
+        floorAreaM2 = 0
+        gridRevision += 1
+    }
+
+    func adopt(grid loaded: OccupancyGrid) {
+        grid = loaded
+        grid.clearanceCap = 1.2
+        grid.autoClearance = false
+        grid.refreshClearance(force: true)
+        recomputeCoverage()
+        gridRevision += 1
+    }
+
+    // ---- observations ----------------------------------------------------
 
     func updatePose(x: Double, y: Double, heading: Double) {
         pose = (x, y, heading)
@@ -79,55 +90,86 @@ final class NavEngine: ObservableObject {
         }
     }
 
-    /// Called by the AR layer ~5 Hz after feeding observations.
+    /// Called by the AR layer at ~5 Hz after feeding observations.
     func tick() {
         clearanceAge += 1
         if clearanceAge >= 5 {
             clearanceAge = 0
             grid.refreshClearance()
-            recount()
+            recomputeCoverage()
+            updateScanHint()
+            gridRevision += 1
         }
-        if mode == .guide, let goal {
-            guideTick(goal: goal)
-        }
-        if mode == .agent {
-            agentTick()
+        if isGuiding, goal != nil {
+            guideTick()
         }
         recordFrame()
     }
 
-    private func recount() {
+    private func recomputeCoverage() {
         var free = 0
-        var occ = 0
+        var frontier = 0
         for v in grid.lo {
-            if v <= LO_FREE { free += 1 } else if v >= LO_OCC { occ += 1 }
+            if v <= LO_FREE { free += 1 }
         }
-        freeCells = free
-        occupiedCells = occ
+        // frontier cells are the honest denominator for "how much is
+        // left": known floor that still borders the unknown
+        frontier = frontierCells(grid).count
+        floorAreaM2 = Double(free) * grid.cellSize * grid.cellSize
+        let denom = Double(free + frontier * 4)
+        coverage = denom > 0 ? min(1, Double(free) / denom) : 0
     }
 
-    // ---- guide mode ------------------------------------------------------
+    /// Turn the frontier solver into a nudge: which way is unmapped.
+    private func updateScanHint() {
+        let here = grid.worldToCell(Vec(pose.x, pose.y))
+        guard let target = selectTarget(grid: grid, start: here,
+                                        params: params, minCluster: 4,
+                                        minDistM: 0.6) else {
+            scanHint = coverage > 0.5
+                ? "This room looks well mapped"
+                : "Sweep the phone slowly across the floor"
+            return
+        }
+        let centre = grid.cellCenter(target.cell)
+        let bearingToTarget = bearing(from: Vec(pose.x, pose.y), to: centre)
+        let rel = wrapAngle(bearingToTarget - pose.heading)
+        let distance = dist(Vec(pose.x, pose.y), centre)
+        let direction: String
+        if abs(rel) < 0.5 {
+            direction = "ahead"
+        } else if rel > 0 {
+            direction = "to your left"
+        } else {
+            direction = "to your right"
+        }
+        scanHint = String(format: "Unmapped area %@ · %.1f m",
+                          direction, distance)
+    }
 
-    func setGoal(_ g: Vec) {
-        goal = g
-        mode = .guide
+    // ---- guidance --------------------------------------------------------
+
+    func startGuidance(to target: Vec, name: String) {
+        goal = target
+        goalName = name
+        isGuiding = true
         grid.refreshClearance(force: true)
         let start = grid.worldToCell(Vec(pose.x, pose.y))
         dstar = DStarLite(grid: grid, start: start,
-                          goal: grid.worldToCell(g), params: params)
+                          goal: grid.worldToCell(target), params: params)
         if fsm.can(.goalSet) { try? fsm.step(.goalSet) }
         replan()
     }
 
-    func stopGuidance() {
+    func clearGuidance() {
         goal = nil
+        goalName = ""
         follower = nil
         dstar = nil
         smoothedPath = []
-        mode = .scan
         cue = nil
+        isGuiding = false
         if fsm.can(.stop) { try? fsm.step(.stop) }
-        statusLine = "Guidance stopped"
     }
 
     private func replan() {
@@ -138,16 +180,16 @@ final class NavEngine: ObservableObject {
             follower = GuidanceFollower(path: sm)
             smoothedPath = sm
             if fsm.can(.planReady) { try? fsm.step(.planReady) }
-            statusLine = "Follow the thread"
+            statusLine = "Follow the route"
         } else {
             follower = nil
             smoothedPath = []
             if fsm.can(.planFailed) { try? fsm.step(.planFailed) }
-            statusLine = "No route yet — keep scanning"
+            statusLine = "No route yet — scan more of the room"
         }
     }
 
-    private func guideTick(goal g: Vec) {
+    private func guideTick() {
         guard let dstar else { return }
         if !pendingChanges.isEmpty {
             dstar.notifyChanged(pendingChanges)
@@ -178,49 +220,30 @@ final class NavEngine: ObservableObject {
         }
     }
 
-    // ---- agent mode (virtual explorer) -----------------------------------
-
-    func toggleAgent() {
-        if mode == .agent {
-            mode = .scan
-            agentPos = nil
-            statusLine = "Agent parked"
-        } else {
-            mode = .agent
-            agentPos = Vec(pose.x, pose.y)
-            agentHeading = pose.heading
-            statusLine = "Agent exploring"
-        }
+    /// Distance along the current route (nil when not guiding).
+    var routeRemainingM: Double? {
+        guard isGuiding, !smoothedPath.isEmpty else { return nil }
+        return polylineLength([Vec(pose.x, pose.y)] + smoothedPath)
     }
 
-    private func agentTick() {
-        guard var p = agentPos else { return }
-        let d = agentSteer.decide(grid: grid,
-                                  pose: (p.x, p.y, agentHeading),
-                                  goalBearing: nil)
-        if !d.blocked {
-            let dt = 0.2
-            let turn = wrapAngle(d.heading - agentHeading)
-            agentHeading = wrapAngle(
-                agentHeading + max(-0.6, min(0.6, turn)))
-            if abs(turn) < 0.45 {
-                let nx = p.x + cos(agentHeading) * d.speed * 0.5 * dt
-                let ny = p.y + sin(agentHeading) * d.speed * 0.5 * dt
-                let cellAt = grid.worldToCell(Vec(nx, ny))
-                if grid.state(cellAt) != OCCUPIED {
-                    p = Vec(nx, ny)
-                }
-            }
-        }
-        agentPos = p
+    // ---- space queries ---------------------------------------------------
+
+    /// "Will an object this wide make it from here to there?"
+    func fitCheck(from: Vec, to target: Vec,
+                  widthM: Double) -> (ok: Bool, pinch: Vec?, narrowest: Double)? {
+        grid.refreshClearance(force: true)
+        guard let res = plan(grid: grid, start: grid.worldToCell(from),
+                             goal: grid.worldToCell(target),
+                             params: params) else { return nil }
+        let sm = smooth(grid: grid, cells: res.cells, params: params)
+        return fitsThrough(grid: grid, pts: sm, widthM: widthM)
     }
 
-    // ---- trace recorder --------------------------------------------------
+    // ---- trace recorder ---------------------------------------------------
 
     func toggleRecording() {
         if recording {
             recording = false
-            statusLine = "Trace saved — use Share"
         } else {
             trace = TraceWriter(header: [
                 "name": .string("iphone-live"),
@@ -238,7 +261,6 @@ final class NavEngine: ObservableObject {
             ])
             traceTick = 0
             recording = true
-            statusLine = "Recording trace"
         }
     }
 
@@ -275,7 +297,6 @@ final class NavEngine: ObservableObject {
         trace.frame(frame)
     }
 
-    /// Serialize the recorded trace to viewer-compatible JSONL.
     func traceJSONL() -> String? {
         guard let trace else { return nil }
         var lines = [jsonLine(trace.header)]
