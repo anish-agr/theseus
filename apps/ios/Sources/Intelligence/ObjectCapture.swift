@@ -264,6 +264,17 @@ final class ObjectCapture: ObservableObject {
             widthM: captured.widthM,
             sizeHeightM: captured.physicalHeightM,
             sizeConfidence: captured.sizeConfidence)
+        // Naming cascade, step 2: when the classifier is unsure, check
+        // whether this LOOKS like something the user already named —
+        // every rename becomes training data. Step 1 was the classifier;
+        // step 3 is text read off the object; only after all three fail
+        // does the app ask.
+        if captured.recognition.confidence < 0.45,
+           let print = captured.recognition.featurePrint,
+           let borrowed = ObjectCapture.borrowName(print: print,
+                                                   context: context) {
+            thing.displayName = borrowed
+        }
         thing.recognizedText = captured.recognition.text
         thing.barcode = captured.recognition.barcode
         thing.featurePrint = captured.recognition.featurePrint
@@ -318,6 +329,32 @@ final class ObjectCapture: ObservableObject {
         // Vision feature-print distances: < ~0.6 is "same object" in
         // practice for a re-look from a similar angle
         return bestDistance < 0.6 ? best : nil
+    }
+
+    /// Nearest-neighbour over the user's own named things: the personal
+    /// classifier that gets smarter with every rename.
+    private static func borrowName(print: Data,
+                                   context: ModelContext) -> String? {
+        let descriptor = FetchDescriptor<Thing>(
+            predicate: #Predicate { $0.userNamed == true })
+        guard let named = try? context.fetch(descriptor),
+              !named.isEmpty else { return nil }
+        var bestName: String?
+        var bestDistance = Float.greatestFiniteMagnitude
+        for candidate in named {
+            guard let fp = candidate.featurePrint,
+                  let d = VisionPipeline.distance(fp, print) else {
+                continue
+            }
+            if d < bestDistance {
+                bestDistance = d
+                bestName = candidate.displayName
+            }
+        }
+        // looser than the same-object merge threshold (0.6): borrowing
+        // a NAME from a lookalike is cheap to correct, merging two
+        // distinct objects is not
+        return bestDistance < 0.75 ? bestName : nil
     }
 
     private func suggestedName(_ r: RecognitionResult) -> String {

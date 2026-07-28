@@ -8,6 +8,7 @@ import SwiftUI
 struct ScanView: View {
     @EnvironmentObject var engine: NavEngine
     @Environment(\.modelContext) private var context
+    @Environment(\.scenePhase) private var scenePhase
     @Binding var room: Room?
     @StateObject private var session = ARSessionManager()
     @StateObject private var capture = ObjectCapture()
@@ -60,9 +61,20 @@ struct ScanView: View {
             draftName = thing.displayName
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             session.pendingCapture = nil
-            autoDismissCard()
+            // Only ask when the whole naming cascade came up empty —
+            // classifier, lookalike borrowing, and text on the object.
+            if thing.displayName == "Unnamed object" {
+                draftName = ""
+                renaming = true
+            } else {
+                autoDismissCard()
+            }
         }
         .onDisappear(perform: persist)
+        .onChange(of: scenePhase) { _, phase in
+            // the map must survive a phone call or app switch mid-scan
+            if phase == .background { persist() }
+        }
         .alert("Name it", isPresented: $renaming) {
             TextField("Name", text: $draftName)
             if let text = cardThing?.recognizedText, !text.isEmpty {
@@ -233,7 +245,10 @@ struct ScanView: View {
         room.floorAreaM2 = engine.floorAreaM2
         room.lastScannedAt = Date()
         session.saveWorldMap(roomID: room.id) { ok in
-            room.hasWorldMap = ok
+            // the room may have been deleted while ARKit serialized
+            if !room.isDeleted, ok {
+                room.hasWorldMap = true
+            }
         }
     }
 }

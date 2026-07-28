@@ -140,20 +140,30 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
             engine.trackingLimited = true
         }
 
-        // dwell -> capture (heavy Vision work off the main actor)
-        if let capture, capture.updateDwell(frame: frame) {
-            capture.busy = true
-            let floor = floorY
-            Task.detached(priority: .userInitiated) {
-                let result = ObjectCapture.analyze(frame: frame,
-                                                   floorY: floor)
-                await MainActor.run {
-                    capture.busy = false
-                    if let result {
-                        self.pendingCapture = result
-                    } else {
-                        capture.hint =
-                            "Couldn't measure that — move a little closer"
+        // dwell -> capture (heavy Vision work off the main actor).
+        // Gated on the floor: without it, object heights and floor-plan
+        // positions would be garbage.
+        if let capture, !floorFound {
+            capture.resetDwell()
+            capture.hint = "Point at the floor first so Theseus can find it"
+        } else if let capture {
+            if capture.hint.hasPrefix("Point at the floor") {
+                capture.hint = ""
+            }
+            if capture.updateDwell(frame: frame) {
+                capture.busy = true
+                let floor = floorY
+                Task.detached(priority: .userInitiated) {
+                    let result = ObjectCapture.analyze(frame: frame,
+                                                       floorY: floor)
+                    await MainActor.run {
+                        capture.busy = false
+                        if let result {
+                            self.pendingCapture = result
+                        } else {
+                            capture.hint =
+                                "Couldn't measure that — move a little closer"
+                        }
                     }
                 }
             }
