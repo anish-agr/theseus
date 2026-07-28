@@ -145,10 +145,90 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
 - **FR-7.1** ✅ The app SHALL record session traces in the same JSONL
   schema the desktop viewer replays, and export them by share sheet.
 
+## FR-8 AI (opt-in cloud brain)
+
+- **FR-8.1** 🧪 All AI features SHALL work behind one provider switch:
+  Gemini (recommended — the free AI Studio tier costs nothing),
+  Anthropic, or any OpenAI-compatible endpoint. Key entered once in
+  Settings, stored in the Keychain, sent as a header, never in a URL.
+- **FR-8.2** 🧪 A photo SHALL leave the device ONLY when the user taps
+  an explicitly-AI action; never in the background. Uploads are
+  downscaled (≤1024 px).
+- **FR-8.3** 🧪 AI actions: itemize a storage photo (FR-9.3), estimate
+  replacement value (FR-10.4), identify an unknown object (FR-12.3).
+  Every AI-derived value is labelled "AI estimate" and user-editable.
+- **FR-8.4** 🧪 Without a key, every AI entry point degrades to its
+  on-device equivalent or explains, in one line, what a free key adds.
+
+## FR-9 Storage memory
+
+- **FR-9.1** 🧪 A StorageSpot (box/bin/closet/drawer/shelf/cabinet)
+  holds things and nests inside other spots. Deleting a spot never
+  deletes its contents.
+- **FR-9.2** 🧪 Things in spots are searchable from Home and iOS
+  Spotlight, answering "in Moving Box 3" rather than a map pin.
+  Contents can also be added by name, no camera required.
+- **FR-9.3** 🧪 Photographing an open container with AI configured
+  SHALL propose an itemized contents list (checklist, user confirms;
+  nothing auto-saves).
+- **FR-9.4** 🧪 Every spot can print a QR label (theseus://spot/id).
+  The iPhone's own camera — or the in-app scanner — pointed at the
+  label opens the contents list.
+
+## FR-10 Insurance assistant
+
+- **FR-10.1** 🧪 A thing MAY carry a serial number, captured by
+  pointing the camera at the label: OCR runs on-device, candidate
+  lines are ranked serial-first, the user picks one.
+- **FR-10.2** 🧪 A thing MAY carry a warranty (expiry + note); the
+  Insurance screen lists warranties passively — no notifications, no
+  nagging.
+- **FR-10.3** 🧪 The Insurance screen shows documented value, gaps
+  (no value / valued-but-no-receipt), and exports the claim-ready PDF:
+  every item with photo, location, size, serial, value, receipt and
+  warranty status across all rooms and storage.
+- **FR-10.4** 🧪 "Estimate value with AI" fills a thing's value from
+  its photo + measured size, labelled as an estimate (FR-8.3).
+
+## FR-11 Condition records (rental deposit)
+
+- **FR-11.1** 🧪 A guided walkthrough (walls, floor, ceiling, windows,
+  door, fixtures, damage close-ups + custom tags) captures dated,
+  captioned photos per room; kinds: move-in, move-out, check-up.
+- **FR-11.2** 🧪 Sealing a record computes a SHA-256 over every photo
+  and caption; sealed records are immutable in the UI and the hash is
+  printed on the export — tamper-evident evidence.
+- **FR-11.3** 🧪 Export per record (photo grid PDF) and per pair
+  (move-in vs move-out side-by-side by tag) — the "that scratch was
+  always there" document.
+- **FR-11.4** 💤 True 3D capture is a LiDAR-device upgrade later; the
+  evidence artifact stays photos-first by design.
+
+## FR-12 Lens, memory lane, voice
+
+- **FR-12.1** 🧪 Lens mode in the scanner identifies WITHOUT saving:
+  a capture is matched by visual fingerprint against everything saved
+  and answers with name, home location, value, serial, warranty, and
+  a Find button.
+- **FR-12.2** 🧪 Memory lane: a month-grouped timeline of first
+  captures, moves, scans and sealed records. No streaks, no guilt.
+- **FR-12.3** 🧪 Lens + AI answers "what is this" for unknown objects
+  (identify + value estimate + one-line summary) and can save the
+  result straight into inventory.
+- **FR-12.4** 🧪 Push-to-talk voice during scan (on-device speech):
+  "mark this" captures, "what is this" runs the lens, "find my X"
+  lights the beacon or answers with the storage spot. Mic hot only
+  while the button shows it.
+- **FR-12.5** 🧪 What-changed reads as a diff: +added, −missing,
+  ~moved with photos, against a chosen archived scan.
+
 ## NFR (non-functional)
 
-- **NFR-1** ✅ All core function on-device and offline. The sole
-  network call is the optional, user-initiated CLIP download.
+- **NFR-1** ✅ All core function on-device and offline. Network is
+  used only for the optional CLIP download and explicit, user-tapped
+  AI actions (FR-8.2) — never in the background.
+- **NFR-8** 🧪 Motion follows docs/BRAND.md: the thread draws, it
+  never spins; no spinners, no checkmarks, no shaking anywhere.
 - **NFR-2** ✅ Photos stay in the app sandbox (not the photo library).
   "Delete everything" removes the store and all blobs.
 - **NFR-3** 🧪 Baseline hardware: iPhone XR (A12, no LiDAR), iOS 17+.
