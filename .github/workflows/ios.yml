@@ -1,0 +1,51 @@
+# iOS build — runs on GitHub's free macOS runners (public repo): no Mac
+# owned, no Mac touched. Produces an UNSIGNED Theseus.ipa artifact;
+# Sideloadly on Windows signs it with a free Apple ID and installs it
+# over USB (docs/NO-MAC.md section 4).
+name: ios
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec apps/ios/project.yml
+          --project apps/ios
+
+      - name: Build (unsigned)
+        run: >
+          xcodebuild
+          -project apps/ios/Theseus.xcodeproj
+          -scheme Theseus
+          -configuration Release
+          -destination 'generic/platform=iOS'
+          -derivedDataPath build
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          CODE_SIGN_IDENTITY=""
+          build
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Theseus.app Payload/
+          zip -qry Theseus.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Theseus-ipa
+          path: Theseus.ipa
+          retention-days: 30
