@@ -31,3 +31,6 @@ apps/ios/**/DerivedData/
 
 # SwiftPM build output
 apps/navcore/.build/
+
+# Apple signing material — private key, certificate, .p12. Never commit.
+tools/appledev/out/
