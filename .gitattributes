@@ -1,0 +1,5 @@
+# Shell scripts must keep LF even on Windows checkouts: Git Bash chokes
+# on the CR ("$'\r': command not found"). Deliberately narrow — a blanket
+# `text=auto` would renormalize the golden fixtures and change their
+# hashes (tests/test_golden.py).
+*.sh text eol=lf
