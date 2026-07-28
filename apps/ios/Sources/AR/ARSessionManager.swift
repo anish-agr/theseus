@@ -14,6 +14,12 @@ import Foundation
 import NavCore
 import UIKit
 
+/// Touched only on ARKit's serial delegate queue: every SECOND camera
+/// frame is forwarded to the main actor. 30 Hz is indistinguishable
+/// for pose/dwell and halves the per-frame main-thread work — the
+/// camera-side stutter of field test 5 was this hop at 60 Hz.
+private var frameDecimator = 0
+
 @MainActor
 final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
     weak var engine: NavEngine?
@@ -131,6 +137,8 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
     // ---- ARSessionDelegate ------------------------------------------------
 
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        frameDecimator += 1
+        guard frameDecimator % 2 == 0 else { return }
         Task { @MainActor in self.handle(frame: frame) }
     }
 
@@ -200,7 +208,7 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
 
         // the lock-on frame: saliency at ~2.5 Hz (any faster just adds
         // heat), off the main actor, offset from the ingest tick
-        if frameCount % 24 == 6, floorFound, !saliencyBusy,
+        if frameCount % 12 == 3, floorFound, !saliencyBusy,
            capture?.busy != true {
             saliencyBusy = true
             let buffer = frame.capturedImage
@@ -210,7 +218,7 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
             Task.detached(priority: .utility) { [weak self] in
                 let vision = VisionPipeline.subjectBoxStrict(
                     pixelBuffer: buffer)
-                let rect: CGRect? = vision.map { v in
+                let rect: CGRect? = vision.flatMap { v in
                     // Vision (origin bottom-left, y up) → ARKit image
                     // coords (top-left) → display transform → screen
                     let img = CGRect(x: v.minX, y: 1 - v.maxY,
@@ -222,11 +230,23 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
                     let y0 = min(a.y, b.y) * viewport.height
                     let x1 = max(a.x, b.x) * viewport.width
                     let y1 = max(a.y, b.y) * viewport.height
+                    var out = CGRect(x: x0, y: y0, width: x1 - x0,
+                                     height: y1 - y0)
+                    // a frame swallowing most of the screen isn't a
+                    // lock, it's saliency shrugging — treat as none
+                    // (field test 5: "usually just a big box")
+                    guard out.width < viewport.width * 0.72,
+                          out.height < viewport.height * 0.58 else {
+                        return nil
+                    }
+                    out = out.insetBy(dx: out.width * 0.04,
+                                      dy: out.height * 0.04)
                     // quantize: a jittering frame reads as noise
-                    return CGRect(x: (x0 / 6).rounded() * 6,
-                                  y: (y0 / 6).rounded() * 6,
-                                  width: ((x1 - x0) / 6).rounded() * 6,
-                                  height: ((y1 - y0) / 6).rounded() * 6)
+                    return CGRect(x: (out.minX / 6).rounded() * 6,
+                                  y: (out.minY / 6).rounded() * 6,
+                                  width: (out.width / 6).rounded() * 6,
+                                  height: (out.height / 6).rounded()
+                                      * 6)
                 }
                 await MainActor.run {
                     guard let self else { return }
@@ -241,8 +261,8 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
             }
         }
 
-        // ingest + engine tick at ~5 Hz
-        guard frameCount % 12 == 0 else { return }
+        // ingest + engine tick at ~5 Hz (handle runs at 30 Hz)
+        guard frameCount % 6 == 0 else { return }
         tick += 1
         var obs: [(Cell, Bool)] = []
 

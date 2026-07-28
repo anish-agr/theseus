@@ -78,6 +78,9 @@ enum AIError: LocalizedError {
         case .notConfigured:
             return "Add an AI key in Settings first — the free "
                 + "Gemini tier works."
+        case .http(429, _):
+            return "The free tier's per-minute limit — wait a "
+                + "minute and try again; nothing is broken."
         case .http(let code, let body):
             return "AI request failed (\(code)): \(body.prefix(160))"
         case .badReply(let text):
@@ -127,6 +130,9 @@ final class AIService: ObservableObject {
     @AppStorage("aiGeminiResolved") var geminiResolved = ""
     /// Bumped so views re-read isConfigured after a key edit.
     @Published var keyEdition = 0
+    /// Live progress line for batch work ("Batch 2 of 3…", "Rate
+    /// limit — waiting 20 s…") so a long identify never looks dead.
+    @Published var batchStatus: String?
 
     var kind: AIProviderKind {
         AIProviderKind(rawValue: kindRaw) ?? .gemini
@@ -244,11 +250,20 @@ final class AIService: ObservableObject {
     func identifyBatch(_ items: [(id: UUID, image: UIImage)])
         async throws -> [UUID: AIIdentification] {
         var out: [UUID: AIIdentification] = [:]
+        defer { batchStatus = nil }
         // 6 photos per call: well inside every provider's limits and
         // keeps one bad response from sinking the whole batch
-        for chunk in stride(from: 0, to: items.count, by: 6).map({
+        let chunks = stride(from: 0, to: items.count, by: 6).map {
             Array(items[$0..<min($0 + 6, items.count)])
-        }) {
+        }
+        for (index, chunk) in chunks.enumerated() {
+            batchStatus = chunks.count > 1
+                ? "Batch \(index + 1) of \(chunks.count)…" : nil
+            // pace the free tier: back-to-back requests trip the
+            // per-minute cap (field test 5's 429)
+            if index > 0 {
+                try await Task.sleep(for: .seconds(8))
+            }
             let prompt = """
             You will be shown \(chunk.count) photos of household \
             objects, in order. Identify each one for a home \
@@ -348,8 +363,29 @@ final class AIService: ObservableObject {
                     true, forKey: "geminiNoThinkingCfg")
             } catch AIError.truncated where attempts <= 3 {
                 tokens = min(tokens * 4, 16000)
+            } catch AIError.http(429, let body) where attempts <= 3 {
+                // free-tier per-MINUTE cap (field test 5) — Google
+                // says how long to wait; wait it and carry on
+                let delay = Self.retryDelay(in: body) ?? 20
+                guard delay <= 90 else {
+                    throw AIError.http(429, body)
+                }
+                batchStatus = "Rate limit — waiting \(Int(delay)) s…"
+                try await Task.sleep(for: .seconds(delay))
+                batchStatus = nil
             }
         }
+    }
+
+    /// Gemini 429 bodies carry RetryInfo like "retryDelay": "34s".
+    static func retryDelay(in body: String) -> Double? {
+        guard let range = body.range(
+            of: #""retryDelay"\s*:\s*"([0-9.]+)s""#,
+            options: .regularExpression) else { return nil }
+        let span = body[range]
+        let digits = span.drop { !$0.isNumber }
+            .prefix { $0.isNumber || $0 == "." }
+        return Double(digits)
     }
 
     /// Shared transport: run the request, surface HTTP failures with

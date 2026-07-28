@@ -15,6 +15,12 @@ struct ARViewContainer: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ARView {
         let view = ARView(frame: .zero)
+        // every effect we don't need is heat the A12 can't spare
+        view.renderOptions = [.disableMotionBlur, .disableDepthOfField,
+                              .disableHDR, .disablePersonOcclusion,
+                              .disableGroundingShadows,
+                              .disableCameraGrain,
+                              .disableAREnvironmentLighting]
         sessionManager.attach(view.session)
         view.session.run(sessionManager.configuration())
         let overlay = AnchorEntity(world: .zero)

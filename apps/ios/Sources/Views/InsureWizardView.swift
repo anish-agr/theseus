@@ -183,6 +183,11 @@ struct InsureWizardView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if running, let status = ai.batchStatus {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             if let identified {
                 HStack(spacing: 8) {

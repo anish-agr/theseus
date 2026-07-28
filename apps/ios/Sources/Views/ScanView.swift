@@ -46,16 +46,19 @@ struct ScanView: View {
                 .ignoresSafeArea()
 
             // the lock-on frame: what a capture would actually save —
-            // no more "it detects stuff off to the side"
+            // corner brackets, not a box claiming precision the
+            // saliency model doesn't have. Absent = no lock = the
+            // dwell won't arm.
             GeometryReader { _ in
                 if let box = session.subjectBox, room != nil {
-                    RoundedRectangle(cornerRadius: 14)
+                    LockBrackets()
                         .stroke(lensOn ? Color.brandDot
                                        : Color.brandThread,
-                                lineWidth: 2.5)
+                                style: StrokeStyle(lineWidth: 3,
+                                                   lineCap: .round))
                         .shadow(color: (lensOn ? Color.brandDot
                                               : Color.brandThread)
-                            .opacity(0.55), radius: 6)
+                            .opacity(0.5), radius: 5)
                         .frame(width: box.width, height: box.height)
                         .position(x: box.midX, y: box.midY)
                         .animation(.easeInOut(duration: 0.2),
@@ -188,6 +191,11 @@ struct ScanView: View {
             if thing.displayName == "Unnamed object" {
                 if wantAI {
                     aiName(thing, captured: new, askIfFailed: true)
+                } else if ai.isConfigured {
+                    // batch-later mode: NEVER interrupt the scan with
+                    // a naming popup — the ✨ pass names it properly
+                    // afterwards (field test 5)
+                    autoDismissCard()
                 } else {
                     draftName = ""
                     renaming = true
@@ -941,6 +949,34 @@ struct ScanView: View {
                 room.hasWorldMap = true
             }
         }
+    }
+}
+
+// ---- lock-on brackets ----------------------------------------------------
+
+/// Four corner brackets — the "targeting" idiom. Honest about being
+/// approximate in a way a tight box is not.
+struct LockBrackets: Shape {
+    func path(in rect: CGRect) -> Path {
+        let arm = min(rect.width, rect.height) * 0.22
+        var p = Path()
+        // top-left
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY + arm))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.minX + arm, y: rect.minY))
+        // top-right
+        p.move(to: CGPoint(x: rect.maxX - arm, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + arm))
+        // bottom-right
+        p.move(to: CGPoint(x: rect.maxX, y: rect.maxY - arm))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.maxX - arm, y: rect.maxY))
+        // bottom-left
+        p.move(to: CGPoint(x: rect.minX + arm, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - arm))
+        return p
     }
 }
 

@@ -82,6 +82,11 @@ struct AIReviewView: View {
                     }
                 }
                 .disabled(!ai.isConfigured || picked.isEmpty || running)
+                if running, let status = ai.batchStatus {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if let doneCount {
                     HStack(spacing: 8) {
                         SuccessDot(size: 13)

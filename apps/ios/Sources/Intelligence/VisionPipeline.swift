@@ -53,11 +53,14 @@ enum VisionPipeline {
         "darkness", "blur", "macro", "abstract", "shape", "line",
         "circle", "rectangle", "object", "item", "thing", "product",
         // taxonomy parents so vague they insult the user ("clothing",
-        // "container" — field test 3)
+        // "container" — field test 3; "wood processed", "interior
+        // room" — field test 5)
         "clothing", "apparel", "container", "cord", "cable",
         "appliance", "device", "equipment", "machine", "tool",
         "furniture", "accessory", "decoration", "utensil",
         "instrument", "hardware", "electronics", "footwear",
+        "wood_processed", "interior_room", "furnishing", "fixture",
+        "flooring", "carpet_flooring", "storage", "mess", "clutter",
     ]
 
     /// Find the subject the user is pointing at: the salient region

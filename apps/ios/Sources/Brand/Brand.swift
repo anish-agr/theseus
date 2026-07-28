@@ -131,10 +131,10 @@ struct ThreadLogoView: View {
 
 // ---- launch ----------------------------------------------------------------
 
-/// Cold-start ritual, ~1.5 s total: the thread traces itself backward
-/// as if drawn by an invisible pen; the destination dot appears only
-/// when the thread completes — arrival, not preexistence (Anish,
-/// field test 3) — gives one soft pulse, and everything ends still.
+/// Cold-start ritual, ~1.5 s total: the thread draws itself FORWARD
+/// from its origin toward the destination — the path leads to the
+/// dot, which appears when the thread arrives (Anish, field test 5)
+/// — one soft pulse, and everything ends still.
 struct LaunchOverlay: View {
     var onFinished: () -> Void
     @State private var drawn: CGFloat = 0.001
@@ -145,7 +145,7 @@ struct LaunchOverlay: View {
     var body: some View {
         ZStack {
             Color.brandIndigoDeep.ignoresSafeArea()
-            ThreadView(from: 1 - drawn, to: 1,
+            ThreadView(from: 0, to: drawn,
                        dotScale: pulse, dotGlow: glow,
                        dotOpacity: dotOpacity)
                 .frame(width: 190, height: 190)
