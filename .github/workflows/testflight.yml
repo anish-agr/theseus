@@ -131,6 +131,13 @@ jobs:
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID"
 
+      # Cheaper to fail here than to wait for Apple to reject the upload
+      # with a numeric code twenty minutes later.
+      - name: Validate IPA
+        run: |
+          IPA="$(find "$RUNNER_TEMP/export" -name '*.ipa' | head -1)"
+          python3 tools/ci/validate_ipa.py "$IPA"
+
       - name: Upload to TestFlight
         env:
           KEY_ID: ${{ secrets.ASC_KEY_ID }}

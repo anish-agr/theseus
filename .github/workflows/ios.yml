@@ -44,6 +44,12 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/Theseus.app Payload/
           zip -qry Theseus.ipa Payload
 
+      # xcodebuild will happily emit an app with no icon, no camera
+      # permission string, or a missing plist key. Those are invisible in
+      # a green log and only surface as a refused install. Check them.
+      - name: Validate IPA
+        run: python3 tools/ci/validate_ipa.py Theseus.ipa
+
       - uses: actions/upload-artifact@v4
         with:
           name: Theseus-ipa
