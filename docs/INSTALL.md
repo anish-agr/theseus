@@ -45,7 +45,24 @@ powershell -File tools/sideloadly/fix-anisette.ps1
 That picks the bundle matching your Sideloadly's bitness (a 64-bit app
 cannot load 32-bit DLLs — switching builds without clearing `an\` leaves
 exactly that mismatch), closes the app to release file locks, extracts,
-and verifies `iTunesCore.dll` is present and the right architecture.
+and verifies `iTunesCore.dll` is present and the right architecture. The
+zip is cached, so repeat runs are instant.
+
+**Then do not let Sideloadly download anisette again.** Its retry
+*deletes the folder first* and then fails at the same point, so
+answering Yes to the update prompt destroys a working set and puts you
+back where you started — the same three files, every time. Answer No.
+
+If it wipes them anyway, make them undeletable:
+
+```bash
+powershell -File tools/sideloadly/fix-anisette.ps1 -Protect
+```
+
+Reverse it with `-Unprotect`. If the 64-bit build still refuses, the
+32-bit Sideloadly is worth trying: this machine has had a complete,
+healthy 32-bit bundle before, so that downloader has worked here. The
+script picks the matching bundle automatically.
 
 It loads every DLL Sideloadly needs, in a 32-bit process, in the same
 search order, and reports the first that fails. It also checks the VC++
