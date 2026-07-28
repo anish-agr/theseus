@@ -606,6 +606,77 @@ def gen_state() -> None:
     path = OUT / "StateParity.swift"
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"wrote {path}")
+    gen_motion()
+
+
+def gen_motion() -> None:
+    """Steering + guidance parity: scripted decide() calls (hysteresis
+    state carried across the sequence) and cue() probes covering every
+    cue kind — the turn-sign cases are the point."""
+    import math as m
+
+    from theseus_engine import astar
+    from theseus_engine.guidance import GuidanceFollower
+    from theseus_engine.steering import VFHSteering
+
+    grid = OccupancyGrid(12, 10, 0.05, origin=(-0.3, -0.2))
+    grid.clearance_cap = 1.2
+    for x, y, occ in _nav_ops():
+        grid.observe((x, y), occ)
+    params = PlanParams(radius=0.05, safe_margin=0.15, margin_weight=1.5)
+
+    steer = VFHSteering(params, lookahead=0.4, min_free=0.1)
+    poses = [
+        ((-0.15, -0.1, 0.3), 0.5),
+        ((-0.13, -0.08, 0.3), 0.5),
+        ((-0.11, -0.06, 0.35), 0.6),
+        ((-0.09, -0.04, 0.4), None),
+        ((-0.05, 0.0, 0.4), 1.2),
+        ((0.0, 0.05, 0.5), 1.2),
+    ]
+    decisions = []
+    for pose, gb in poses:
+        d = steer.decide(grid, pose, gb)
+        gb_lit = lit(gb) if gb is not None else "-99.0"
+        decisions.append(
+            f"({_vec(pose[:2])}, {lit(pose[2])}, {gb_lit}, "
+            f"{lit(d.heading)}, {lit(d.speed)}, {lit(d.free_dist)}, "
+            f"{str(d.blocked).lower()}, \"{d.reason}\")")
+
+    plan_res = astar.plan(grid, (0, 0), (11, 9), params)
+    smoothed = astar.smooth(grid, plan_res.cells, params)
+    gf = GuidanceFollower(smoothed)
+    probe_poses = [
+        (-0.275, -0.175, 0.6),      # near start, roughly on-heading
+        (-0.275, -0.175, -1.2),     # same spot, facing right of path
+        (-0.275, -0.175, 2.6),      # facing left of path
+        (-0.1, 0.05, 0.8),          # mid-path
+        (smoothed[-1][0] - 0.02, smoothed[-1][1] - 0.02, 0.0),  # at goal
+        (-0.28, 1.5, 0.0),          # way off in the weeds
+    ]
+    cues = []
+    for pose in probe_poses:
+        c = gf.cue(grid, pose)
+        cues.append(
+            f"({_vec(pose[:2])}, {lit(pose[2])}, \"{c.kind}\", "
+            f"{lit(c.distance)}, {lit(c.angle_deg)}, {lit(c.cross_track)}, "
+            f"{lit(c.corridor)}, {_vec(c.target)})")
+    kinds = {c.split('\"')[1] for c in [x for x in cues]}
+
+    smoothed_lit = ", ".join(_vec(p) for p in smoothed)
+    lines = [
+        HEADER,
+        "let steerScript: "
+        "[(Vec, Double, Double, Double, Double, Double, Bool, String)] = ["
+        + ", ".join(decisions) + "]\n",
+        f"let guidePath: [Vec] = [{smoothed_lit}]\n",
+        "let cueProbes: "
+        "[(Vec, Double, String, Double, Double, Double, Double, Vec)] = ["
+        + ", ".join(cues) + "]\n",
+    ]
+    path = OUT / "MotionParity.swift"
+    path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    print(f"wrote {path}")
 
 
 if __name__ == "__main__":
