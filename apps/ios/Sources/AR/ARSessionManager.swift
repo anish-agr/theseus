@@ -150,8 +150,14 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
             if capture.hint.hasPrefix("Point at the floor") {
                 capture.hint = ""
             }
-            if capture.updateDwell(frame: frame) {
+            // dwell capture can be turned off entirely in Settings —
+            // the shutter and voice still work
+            let dwellOn = UserDefaults.standard
+                .object(forKey: "dwellCapture") as? Bool ?? true
+            if dwellOn, capture.updateDwell(frame: frame) {
                 fire(frame: frame, capture: capture)
+            } else if !dwellOn {
+                capture.dwellProgress = 0
             }
         }
 

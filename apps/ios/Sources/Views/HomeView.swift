@@ -153,7 +153,12 @@ struct HomeView: View {
                     locate(thing)
                 } label: {
                     HStack(spacing: 12) {
-                        ThingRow(thing: thing, showRoom: true)
+                        ThingRow(thing: thing, showRoom: true,
+                                 spotName: thing.storageID.flatMap {
+                                     id in spots.first {
+                                         $0.id == id
+                                     }?.name
+                                 })
                         Spacer()
                         Label("Find", systemImage: "location.fill")
                             .font(.caption.bold())

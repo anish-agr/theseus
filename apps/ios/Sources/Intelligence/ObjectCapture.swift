@@ -39,11 +39,18 @@ final class ObjectCapture: ObservableObject {
     @Published var lastCaptured: Thing?
     @Published var hint: String = ""
 
-    var dwellSeconds: Double = 1.2
+    /// Field test 2 verdict: 1.2 s dwell + short cooldown captured the
+    /// room like a machine gun ("it keeps scanning stuff when you
+    /// don't want it to"). Saving something must feel like a LOCK-ON:
+    /// longer hold, tighter steadiness, long cooldown, and after a
+    /// capture the camera must actually point somewhere else before
+    /// the ring will start again.
+    var dwellSeconds: Double = 2.2
     private var dwellAccum: Double = 0
     private var lastFrameTime: TimeInterval = 0
     private var dwellForward: SIMD3<Float>?
     private var cooldownUntil: Date = .distantPast
+    private var lastCaptureForward: SIMD3<Float>?
 
     /// Called every AR frame. Returns true when a capture should fire.
     func updateDwell(frame: ARFrame) -> Bool {
@@ -59,9 +66,20 @@ final class ObjectCapture: ObservableObject {
         let forward = simd_normalize(SIMD3<Float>(-t.columns.2.x,
                                                   -t.columns.2.y,
                                                   -t.columns.2.z))
+        // after a capture, the same aim must not immediately re-arm:
+        // require pointing ~15° away first, so one couch is one save
+        if let captured = lastCaptureForward {
+            if simd_dot(captured, forward) > 0.966 {
+                dwellAccum = 0
+                dwellProgress = 0
+                return false
+            }
+            lastCaptureForward = nil
+        }
         if let anchorForward = dwellForward {
-            // ~7 degrees of swing resets the dwell
-            if simd_dot(anchorForward, forward) < 0.992 {
+            // ~5 degrees of swing resets the dwell — locking on is
+            // deliberate, walking past something is not
+            if simd_dot(anchorForward, forward) < 0.996 {
                 dwellForward = forward
                 dwellAccum = 0
             }
@@ -80,7 +98,8 @@ final class ObjectCapture: ObservableObject {
             dwellAccum = 0
             dwellForward = nil
             dwellProgress = 0
-            cooldownUntil = Date().addingTimeInterval(0.8)
+            cooldownUntil = Date().addingTimeInterval(3.0)
+            lastCaptureForward = forward
             return true
         }
         return false

@@ -158,12 +158,18 @@ struct GapListView: View {
     let title: String
     let things: [Thing]
     let hint: String
+    @Query private var spots: [StorageSpot]
 
     var body: some View {
         List {
             Section {
                 ForEach(things) { thing in
-                    ThingRow(thing: thing, showRoom: true)
+                    ThingRow(thing: thing, showRoom: true,
+                             spotName: thing.storageID.flatMap {
+                                 id in spots.first {
+                                     $0.id == id
+                                 }?.name
+                             })
                 }
             } footer: {
                 Text(hint)

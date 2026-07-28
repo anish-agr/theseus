@@ -33,12 +33,25 @@ struct RecognitionResult {
 enum VisionPipeline {
     private static let ciContext = CIContext(options: nil)
 
-    /// Categories we never want as an object name — they describe the
-    /// scene, not a thing you'd go find.
+    /// Labels we never want as an object name — scene words describe
+    /// the room, material words describe what things are MADE of
+    /// (field test 2: "it thinks everything is a textile"). Blocking
+    /// the generic parents lets the classifier's more specific,
+    /// lower-ranked guesses surface — and when nothing usable is
+    /// left, the naming cascade (lookalikes → text → ask) is a far
+    /// better answer than "Textile".
     private static let sceneWords: Set<String> = [
+        // scene
         "indoor", "outdoor", "room", "interior", "floor", "wall",
-        "ceiling", "structure", "material", "surface", "light",
+        "ceiling", "structure", "surface", "light",
         "architecture", "building", "home", "house", "furniture_room",
+        // materials & abstractions
+        "material", "textile", "fabric", "cloth", "canvas", "linen",
+        "wool", "cotton", "leather", "plastic", "metal", "wood",
+        "paper", "cardboard", "glass", "ceramic", "stone",
+        "pattern", "texture", "design", "art", "still_life",
+        "darkness", "blur", "macro", "abstract", "shape", "line",
+        "circle", "rectangle", "object", "item", "thing", "product",
     ]
 
     /// Find the subject the user is pointing at: the salient region

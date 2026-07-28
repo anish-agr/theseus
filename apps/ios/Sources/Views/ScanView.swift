@@ -22,6 +22,7 @@ struct ScanView: View {
     @Query private var spots: [StorageSpot]
     @State private var card: CapturedObject?
     @State private var cardThing: Thing?
+    @State private var cardWasNew = false
     @State private var renaming = false
     @State private var draftName = ""
     @State private var saveNotice: String?
@@ -64,7 +65,7 @@ struct ScanView: View {
                             with: .opacity))
                 }
                 if engine.locateTarget != nil {
-                    LocateBar()
+                    LocateBar(active: selectedTab == 1)
                         .padding(.horizontal)
                         .padding(.bottom, 4)
                 }
@@ -126,6 +127,9 @@ struct ScanView: View {
             room.lastScannedAt = Date()
             card = new
             cardThing = thing
+            // hits == 1 means commit CREATED it (a merge increments);
+            // only a fresh thing can be un-saved from the card
+            cardWasNew = thing.hits == 1
             draftName = thing.displayName
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             session.pendingCapture = nil
@@ -151,6 +155,11 @@ struct ScanView: View {
                 }
             }
             Button("Save") { applyName(draftName) }
+            if cardWasNew {
+                Button("Don't save this", role: .destructive) {
+                    discardCapture()
+                }
+            }
             Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $showSummary) {
@@ -606,6 +615,11 @@ struct ScanView: View {
         .background(.black.opacity(0.55),
                     in: RoundedRectangle(cornerRadius: 10))
         .frame(maxWidth: 200, alignment: .leading)
+        .task(id: saveNotice) {
+            guard saveNotice != nil else { return }
+            try? await Task.sleep(for: .seconds(3))
+            saveNotice = nil
+        }
     }
 
     private func captureCard(_ captured: CapturedObject) -> some View {
@@ -623,18 +637,43 @@ struct ScanView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            if cardWasNew {
+                Button {
+                    discardCapture()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .tint(.red)
+                .accessibilityLabel("Don't save this")
+            }
             Button("Rename") { renaming = true }
                 .buttonStyle(.bordered).controlSize(.small)
             Button {
                 card = nil
             } label: {
-                Image(systemName: "checkmark")
+                Image(systemName: "arrow.down.right.circle")
             }
             .buttonStyle(.borderedProminent).controlSize(.small)
+            .accessibilityLabel("Keep it")
         }
         .padding(10)
         .background(.ultraThinMaterial,
                     in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    /// "Don't save this item" — deletes the thing the capture just
+    /// created. (A capture that MERGED into something you already had
+    /// doesn't offer this: deleting history to undo a glance would be
+    /// worse.)
+    private func discardCapture() {
+        if cardWasNew, let thing = cardThing {
+            Store.deleteThingBlobs(thing.id)
+            context.delete(thing)
+        }
+        card = nil
+        cardThing = nil
+        renaming = false
     }
 
     private func sizeLine(_ c: CapturedObject) -> String {
@@ -891,7 +930,12 @@ struct ScanSummarySheet: View {
 /// one tap away for when a route actually helps.
 struct LocateBar: View {
     @EnvironmentObject var engine: NavEngine
+    /// False when the Scan tab isn't front — the geiger haptics must
+    /// never tick from a background tab (field test 2: "it keeps
+    /// doing the haptic thing even when you're not scanning").
+    var active: Bool = true
     @State private var lastTick = Date.distantPast
+    private static let haptic = UIImpactFeedbackGenerator(style: .light)
 
     var body: some View {
         guard let target = engine.locateTarget else {
@@ -956,12 +1000,12 @@ struct LocateBar: View {
 
     /// Geiger-counter haptics: period shrinks as distance does.
     private func tick(distance: Double) {
+        guard active else { return }
         let period = max(0.25, min(1.6, distance * 0.35))
         guard Date().timeIntervalSince(lastTick) > period else { return }
         lastTick = Date()
         let strength = distance < 1.5 ? 0.9 : 0.5
-        UIImpactFeedbackGenerator(style: .light)
-            .impactOccurred(intensity: strength)
+        Self.haptic.impactOccurred(intensity: strength)
     }
 
     private func directionWords(_ rel: Double) -> String {

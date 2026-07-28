@@ -9,10 +9,16 @@ import SwiftUI
 struct ThingsView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \Thing.lastSeenAt, order: .reverse) private var things: [Thing]
+    @Query private var spots: [StorageSpot]
     @Binding var activeRoom: Room?
     @Binding var selectedTab: Int
     @State private var query = ""
     @State private var filter: Filter = .all
+
+    private func spotName(_ thing: Thing) -> String? {
+        guard let id = thing.storageID else { return nil }
+        return spots.first { $0.id == id }?.name
+    }
 
     enum Filter: String, CaseIterable {
         case all = "All"
@@ -33,7 +39,8 @@ struct ThingsView: View {
                                         activeRoom: $activeRoom,
                                         selectedTab: $selectedTab)
                     } label: {
-                        ThingRow(thing: thing, showRoom: true)
+                        ThingRow(thing: thing, showRoom: true,
+                                 spotName: spotName(thing))
                     }
                     .swipeActions(edge: .leading) {
                         Button {
@@ -122,12 +129,9 @@ struct ThingsView: View {
 struct ThingRow: View {
     let thing: Thing
     let showRoom: Bool
-    @Query private var spots: [StorageSpot]
-
-    private var spotName: String? {
-        guard let id = thing.storageID else { return nil }
-        return spots.first { $0.id == id }?.name
-    }
+    /// Passed by the parent (which already holds the spots query) —
+    /// a per-row @Query here made long lists visibly hitch.
+    var spotName: String?
 
     var body: some View {
         HStack(spacing: 12) {

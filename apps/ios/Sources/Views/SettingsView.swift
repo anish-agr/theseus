@@ -61,6 +61,16 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Scanning") {
+                    Toggle("Hold-to-save (dwell) capture",
+                           isOn: dwellBinding)
+                    Text("Off means only the shutter button and voice "
+                         + "save objects — the ring never fires on "
+                         + "its own.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Diagnostics") {
                     Toggle("Record a trace", isOn: Binding(
                         get: { engine.recording },
@@ -196,6 +206,19 @@ struct SettingsView: View {
         .onAppear {
             keyDraft = KeyStore.load(account: ai.kind.rawValue) ?? ""
         }
+    }
+
+    /// Backed by UserDefaults directly because ARSessionManager (not
+    /// a view) reads the same key on the frame path.
+    private var dwellBinding: Binding<Bool> {
+        Binding(
+            get: {
+                UserDefaults.standard.object(forKey: "dwellCapture")
+                    as? Bool ?? true
+            },
+            set: {
+                UserDefaults.standard.set($0, forKey: "dwellCapture")
+            })
     }
 
     private var diskUsage: String {

@@ -41,9 +41,13 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
 
 ## FR-2 Object capture
 
-- **FR-2.1** 🧪 Holding the aim reticle steady on an object for ~1.2 s
-  SHALL capture it, with no button press. Swinging the phone > ~7°
-  resets the dwell; walking toward the object does not.
+- **FR-2.1** 🧪 Holding the aim reticle steady on an object for
+  ~2.2 s SHALL capture it, with no button press. Swinging the phone
+  > ~5° resets the dwell; walking toward the object does not. After a
+  capture: 3 s cooldown AND the camera must point ~15° away before
+  the ring re-arms — one couch is one save. (Field test 2: the 1.2 s
+  version "keeps scanning stuff when you don't want it to".) Dwell
+  can be disabled entirely in Settings; shutter and voice remain.
 - **FR-2.2** 🧪 Capture SHALL NOT fire before the floor is detected.
 - **FR-2.3** 🧪 Each capture SHALL record: cropped photo, classifier
   label + confidence, text read off the object, barcode when present,
@@ -71,6 +75,13 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
   completed, the spinner ran, and nothing happened. Never again.)
 - **FR-2.10** 🧪 A manual shutter button SHALL back up the dwell for
   one-handed / awkward-angle captures.
+- **FR-2.11** 🧪 The capture card SHALL offer "don't save this" for a
+  newly created thing (deletes it and its photo); merges into an
+  existing thing don't offer it — undoing history is worse than an
+  extra sighting.
+- **FR-2.12** 🧪 Generic classifier labels (materials like "textile",
+  scene words, abstractions) SHALL never become an object's name —
+  fall through the naming cascade instead.
 
 ## FR-3 Inventory & search
 
@@ -103,9 +114,12 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
   haptics whose intensity rises as the corridor narrows, and voice
   (phone speaker) that is **muted until explicitly unmuted**.
 - **FR-4.7** 🧪 The DEFAULT find experience is **locate-in-camera**:
-  the item's pin becomes a green beacon in AR, a bar tracks live
+  the item gets a slim warm light-pillar in AR, a bar tracks live
   distance + direction arrow, haptic ticks quicken as you close in
-  (geiger-counter). Turn-by-turn is one tap away from there.
+  (geiger-counter). Haptics fire ONLY while the Scan tab is frontmost
+  (field test 2: background ticking read as a bug). Turn-by-turn is
+  one tap away. Saved-object markers are tiny warm dots, not
+  traffic-cone spheres.
 - **FR-4.8** 🧪 A route that cannot exist yet SHALL surface as a toast
   ("scan the floor between you and it"), never as an empty full-screen
   guidance takeover.

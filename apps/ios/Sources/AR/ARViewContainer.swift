@@ -71,38 +71,47 @@ struct ARViewContainer: UIViewRepresentable {
                     s += 0.3
                 }
             }
+            // brand colors in world space: warm destination white,
+            // used sparingly — field test 2 called the old fat green
+            // beacon and chunky yellow spheres "big and ugly"
+            let warm = UIColor(red: 1.0, green: 0.965, blue: 0.91,
+                               alpha: 1)
             if let goal {
                 let pin = ModelEntity(
-                    mesh: MeshResource.generateBox(width: 0.07,
-                                                   height: 0.5,
-                                                   depth: 0.07),
-                    materials: [SimpleMaterial(color: .green,
+                    mesh: MeshResource.generateBox(
+                        width: 0.02, height: 0.7, depth: 0.02,
+                        cornerRadius: 0.01),
+                    materials: [SimpleMaterial(color: warm,
                                                isMetallic: false)])
-                pin.position = SIMD3<Float>(Float(goal.x), floorY + 0.25,
+                pin.position = SIMD3<Float>(Float(goal.x), floorY + 0.35,
                                             Float(-goal.y))
                 overlay.addChild(pin)
             }
-            // remembered objects, floating where they were logged; a
-            // located thing gets a tall green beacon you can spot
-            // across the room, everything else a small amber dot
-            let pinMesh = MeshResource.generateSphere(radius: 0.045)
-            let pinMat = SimpleMaterial(color: .systemYellow,
-                                        isMetallic: false)
+            // remembered objects wear tiny warm dots — quiet marks of
+            // "this is in your memory", not traffic cones. The located
+            // thing gets a slim light-pillar plus a small dot at its
+            // own height.
+            let pinMesh = MeshResource.generateSphere(radius: 0.014)
+            let pinMat = SimpleMaterial(
+                color: warm.withAlphaComponent(0.75),
+                isMetallic: false)
             for pin in pins.prefix(120) {
                 if pin.highlighted {
                     let beacon = ModelEntity(
                         mesh: MeshResource.generateBox(
-                            width: 0.05, height: 1.2, depth: 0.05,
-                            cornerRadius: 0.02),
+                            width: 0.016, height: 1.5, depth: 0.016,
+                            cornerRadius: 0.008),
                         materials: [SimpleMaterial(
-                            color: .systemGreen, isMetallic: false)])
+                            color: warm.withAlphaComponent(0.9),
+                            isMetallic: false)])
                     beacon.position = SIMD3<Float>(
-                        Float(pin.x), floorY + 0.6, Float(-pin.y))
+                        Float(pin.x), floorY + 0.75, Float(-pin.y))
                     overlay.addChild(beacon)
                     let orb = ModelEntity(
-                        mesh: MeshResource.generateSphere(radius: 0.09),
+                        mesh: MeshResource.generateSphere(
+                            radius: 0.04),
                         materials: [SimpleMaterial(
-                            color: .systemGreen, isMetallic: false)])
+                            color: warm, isMetallic: false)])
                     orb.position = SIMD3<Float>(
                         Float(pin.x),
                         floorY + Float(max(0.15, pin.height)),
