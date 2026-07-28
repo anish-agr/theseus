@@ -189,6 +189,57 @@ enum Store {
         FileManager.default.fileExists(atPath: receiptURL(thingID).path)
     }
 
+    // ---- storage spots ---------------------------------------------------
+
+    static func spotPhotoURL(_ spotID: UUID) -> URL {
+        thingsDir().appendingPathComponent(
+            "spot-\(spotID.uuidString).jpg")
+    }
+
+    static func saveSpotPhoto(_ data: Data, spotID: UUID) {
+        try? data.write(to: spotPhotoURL(spotID), options: .atomic)
+    }
+
+    static func loadSpotPhoto(_ spotID: UUID) -> UIImage? {
+        UIImage(contentsOfFile: spotPhotoURL(spotID).path)
+    }
+
+    static func deleteSpotBlobs(_ spotID: UUID) {
+        try? FileManager.default.removeItem(at: spotPhotoURL(spotID))
+    }
+
+    // ---- condition records (rental-deposit evidence) ---------------------
+
+    static func conditionDir(_ recordID: UUID) -> URL {
+        let dir = root.appendingPathComponent(
+            "condition/\(recordID.uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func conditionShotURL(recordID: UUID, shotID: UUID) -> URL {
+        conditionDir(recordID)
+            .appendingPathComponent("\(shotID.uuidString).jpg")
+    }
+
+    static func saveConditionShot(_ data: Data, recordID: UUID,
+                                  shotID: UUID) {
+        try? data.write(to: conditionShotURL(recordID: recordID,
+                                             shotID: shotID),
+                        options: .atomic)
+    }
+
+    static func loadConditionShot(recordID: UUID,
+                                  shotID: UUID) -> UIImage? {
+        UIImage(contentsOfFile: conditionShotURL(
+            recordID: recordID, shotID: shotID).path)
+    }
+
+    static func deleteConditionBlobs(_ recordID: UUID) {
+        try? FileManager.default.removeItem(at: conditionDir(recordID))
+    }
+
     // ---- traces ----------------------------------------------------------
 
     static func saveTrace(_ jsonl: String, sessionID: UUID) -> URL? {

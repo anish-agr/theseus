@@ -29,6 +29,12 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleIconName: AppIcon
         NSCameraUsageDescription: "Theseus scans the room with the camera to build a live navigation map."
+        NSMicrophoneUsageDescription: "Voice commands during a scan — \"mark this\", \"what is this\", \"find my keys\". The mic is on only while the button shows it is."
+        NSSpeechRecognitionUsageDescription: "Turns those voice commands into text, on this iPhone when the system supports it."
+        # printed QR box labels deep-link back into the app
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.anish.theseus
+            CFBundleURLSchemes: [theseus]
         # no encryption beyond what iOS itself provides — declaring it
         # skips the export-compliance prompt on every TestFlight build
         ITSAppUsesNonExemptEncryption: false
@@ -43,6 +49,6 @@ targets:
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         CURRENT_PROJECT_VERSION: 1
-        MARKETING_VERSION: 0.2.0
+        MARKETING_VERSION: 0.3.0
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: ""

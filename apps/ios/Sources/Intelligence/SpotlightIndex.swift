@@ -9,11 +9,17 @@ import UniformTypeIdentifiers
 enum SpotlightIndex {
     static let domain = "dev.anish.theseus.things"
 
-    static func index(_ thing: Thing) {
+    /// `location` overrides the room line — used for things that live
+    /// in a storage spot ("In Moving Box 3") rather than at a pin.
+    static func index(_ thing: Thing, location: String? = nil) {
         let attrs = CSSearchableItemAttributeSet(contentType: .item)
         attrs.title = thing.displayName
         var parts: [String] = []
-        if let room = thing.room { parts.append("In the \(room.name)") }
+        if let location {
+            parts.append(location)
+        } else if let room = thing.room {
+            parts.append("In the \(room.name)")
+        }
         if thing.widthM > 0 { parts.append(thing.sizeDescription) }
         parts.append("Theseus knows where this is")
         attrs.contentDescription = parts.joined(separator: " · ")

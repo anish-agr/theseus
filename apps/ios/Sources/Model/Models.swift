@@ -131,6 +131,22 @@ final class Thing {
     // value tracking (optional — powers the insurance report totals).
     // The receipt photo itself is a blob (Store.receiptURL).
     var price: Double?
+    /// Where the value came from: "" (user-typed) or "ai" (estimated).
+    var priceSource: String = ""
+
+    // insurance dossier (all optional, all additive migrations)
+    var serialNumber: String?
+    var warrantyUntil: Date?
+    var warrantyNote: String?
+
+    /// Lives inside a StorageSpot (box/closet/drawer) instead of — or
+    /// as well as — sitting at a mapped position. Position-less things
+    /// (widthM == 0 && hits == 0 convention not needed: hasPosition
+    /// below) exist for itemized box contents.
+    var storageID: UUID?
+    /// False for things created by itemizing a box photo — they have a
+    /// home (the spot) but no floor-plan pin.
+    var hasPosition: Bool = true
 
     var room: Room?
 
@@ -193,6 +209,100 @@ final class Sighting {
         self.positionY = positionY
         self.confidence = confidence
         self.movedSincePrevious = movedSincePrevious
+    }
+}
+
+/// A storage location with contents: box, bin, closet, drawer, shelf.
+/// This is the half of "where is my X" that no camera scan answers —
+/// things that live INSIDE other things. Spots nest (closet > shelf >
+/// box) via parentID, carry an optional photo of their contents
+/// (Store.spotPhotoURL), and can be labelled with a printable QR that
+/// deep-links back to the spot (theseus://spot/<uuid>).
+@Model
+final class StorageSpot {
+    var id: UUID = UUID()
+    var name: String = "Box"
+    var kind: String = "box"    // box|bin|closet|drawer|shelf|cabinet|other
+    var note: String = ""
+    var createdAt: Date = Date()
+    var roomID: UUID?           // loose link — survives room deletion
+    var parentID: UUID?         // nesting; nil = top level
+
+    init(name: String, kind: String, roomID: UUID? = nil,
+         parentID: UUID? = nil) {
+        self.id = UUID()
+        self.name = name
+        self.kind = kind
+        self.roomID = roomID
+        self.parentID = parentID
+        self.createdAt = Date()
+    }
+
+    var kindSymbol: String {
+        switch kind {
+        case "box": return "shippingbox"
+        case "bin": return "archivebox"
+        case "closet": return "door.left.hand.closed"
+        case "drawer": return "tray"
+        case "shelf": return "books.vertical"
+        case "cabinet": return "cabinet"
+        default: return "square.dashed"
+        }
+    }
+}
+
+/// One evidence walkthrough of a room — the rental-deposit feature.
+/// A record is a set of dated, captioned photos (walls, floor, damage
+/// close-ups); sealing it computes a SHA-256 over every photo and its
+/// metadata, so the record provably hasn't been edited after the fact.
+/// Move-out repeats the walkthrough and the pair exports side-by-side.
+@Model
+final class ConditionRecord {
+    var id: UUID = UUID()
+    var roomID: UUID?
+    var roomName: String = "Room"   // survives room deletion — evidence
+    var kind: String = "movein"     // movein|moveout|checkup
+    var startedAt: Date = Date()
+    var sealedAt: Date?
+    var sealHash: String?
+
+    @Relationship(deleteRule: .cascade, inverse: \ConditionShot.record)
+    var shots: [ConditionShot] = []
+
+    init(roomID: UUID?, roomName: String, kind: String) {
+        self.id = UUID()
+        self.roomID = roomID
+        self.roomName = roomName
+        self.kind = kind
+        self.startedAt = Date()
+    }
+
+    var isSealed: Bool { sealedAt != nil }
+
+    var kindTitle: String {
+        switch kind {
+        case "movein": return "Move-in"
+        case "moveout": return "Move-out"
+        default: return "Check-up"
+        }
+    }
+}
+
+/// One photo in a condition record. The image bytes live in
+/// Store.conditionShotURL; this row is the caption and the clock.
+@Model
+final class ConditionShot {
+    var id: UUID = UUID()
+    var at: Date = Date()
+    var tag: String = ""        // "North wall", "Damage close-up", …
+    var note: String = ""
+    var record: ConditionRecord?
+
+    init(tag: String, note: String = "") {
+        self.id = UUID()
+        self.at = Date()
+        self.tag = tag
+        self.note = note
     }
 }
 

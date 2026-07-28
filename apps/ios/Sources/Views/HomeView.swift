@@ -13,11 +13,18 @@ struct HomeView: View {
     private var things: [Thing]
     @Query(sort: \Room.lastScannedAt, order: .reverse)
     private var rooms: [Room]
+    @Query private var spots: [StorageSpot]
     @Binding var activeRoom: Room?
     @Binding var selectedTab: Int
     @State private var query = ""
     @FocusState private var searchFocused: Bool
     @State private var toolPick: QuickTool?
+    @State private var pushed: HomeDestination?
+
+    enum HomeDestination: String, Identifiable {
+        case storage, insurance, condition, memorylane
+        var id: String { rawValue }
+    }
 
     var body: some View {
         NavigationStack {
@@ -34,9 +41,27 @@ struct HomeView: View {
                 }
                 .padding()
             }
+            .brandBackground()
             .navigationTitle("Theseus")
             .sheet(item: $toolPick) { tool in
                 RoomToolSheet(tool: tool, rooms: rooms)
+            }
+            .sheet(item: $pushed) { destination in
+                NavigationStack {
+                    Group {
+                        switch destination {
+                        case .storage: StorageView()
+                        case .insurance: InsuranceView()
+                        case .condition: ConditionView()
+                        case .memorylane: MemoryLaneView()
+                        }
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { pushed = nil }
+                        }
+                    }
+                }
             }
         }
     }
@@ -79,13 +104,49 @@ struct HomeView: View {
             .map(\.0)
     }
 
+    private var spotMatches: [StorageSpot] {
+        let q = query.lowercased()
+            .trimmingCharacters(in: .whitespaces)
+        guard q.count >= 2 else { return [] }
+        return spots.filter { $0.name.lowercased().contains(q) }
+    }
+
     private var searchResults: some View {
         VStack(spacing: 10) {
-            if matches.isEmpty {
+            if matches.isEmpty && spotMatches.isEmpty {
                 ContentUnavailableView(
                     "No matches", systemImage: "magnifyingglass",
                     description: Text("Nothing you've saved matches "
                                       + "\"\(query)\"."))
+            }
+            ForEach(spotMatches) { spot in
+                Button {
+                    pushed = .storage
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: spot.kindSymbol)
+                            .font(.title3)
+                            .foregroundStyle(Color.brandThread)
+                            .frame(width: 44, height: 44)
+                            .background(.thinMaterial,
+                                        in: RoundedRectangle(
+                                            cornerRadius: 8))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(spot.name).font(.headline)
+                            let count = things.filter {
+                                $0.storageID == spot.id
+                            }.count
+                            Text(count == 1
+                                 ? "storage · 1 item"
+                                 : "storage · \(count) items")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
             ForEach(matches) { thing in
                 Button {
@@ -140,6 +201,22 @@ struct HomeView: View {
                        "Search everything you own") {
                 searchFocused = true
             }
+            actionCard("shippingbox", "Storage",
+                       "Boxes, closets, drawers — itemized") {
+                pushed = .storage
+            }
+            actionCard("checkmark.shield", "Insurance",
+                       "Values, serials, the claim PDF") {
+                pushed = .insurance
+            }
+            actionCard("camera.on.rectangle", "Deposit proof",
+                       "Sealed move-in/out evidence") {
+                pushed = .condition
+            }
+            actionCard("clock", "Memory lane",
+                       "Your home's diary, by month") {
+                pushed = .memorylane
+            }
             actionCard("doc.richtext", "Room report",
                        "PDF with photos, sizes, values") {
                 toolPick = .report
@@ -174,7 +251,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Image(systemName: icon)
                     .font(.title2)
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(Color.brandThread)
                 Text(title)
                     .font(.subheadline.bold())
                     .foregroundStyle(.primary)
@@ -274,6 +351,8 @@ struct RoomToolSheet: View {
     @Environment(\.dismiss) private var dismiss
     let tool: QuickTool
     let rooms: [Room]
+    @Query private var allThings: [Thing]
+    @Query private var allSpots: [StorageSpot]
     @State private var shareURL: URL?
     @State private var exportFailed = false
 
@@ -328,7 +407,7 @@ struct RoomToolSheet: View {
                         Text("\(room.things.count) things")
                             .foregroundStyle(.secondary)
                         Image(systemName: "square.and.arrow.up")
-                            .foregroundStyle(.cyan)
+                            .foregroundStyle(Color.brandThread)
                     }
                 }
             case .export:
@@ -341,14 +420,16 @@ struct RoomToolSheet: View {
         VStack(spacing: 16) {
             Image(systemName: "square.and.arrow.up")
                 .font(.system(size: 40))
-                .foregroundStyle(.cyan)
+                .foregroundStyle(Color.brandThread)
             Text("Everything you've saved, one JSON file — names, "
                  + "rooms, positions, sizes, values, dates.")
                 .font(.callout)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
             Button("Export") {
-                shareURL = Reports.inventoryJSON(rooms: rooms)
+                shareURL = Reports.inventoryJSON(
+                    rooms: rooms, allThings: allThings,
+                    spots: allSpots)
                 if shareURL == nil { exportFailed = true }
             }
             .buttonStyle(.borderedProminent)
