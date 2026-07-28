@@ -1063,7 +1063,7 @@ struct LocateBar: View {
     /// "just points you into a wall" (field test 3). Straight line is
     /// only the fallback when no route exists yet.
     @State private var routeHint: (heading: Double,
-                                   distance: Double)?
+                                   distanceM: Double)?
     @State private var lastPlanAt = Date.distantPast
     private static let haptic = UIImpactFeedbackGenerator(style: .light)
 
@@ -1074,7 +1074,7 @@ struct LocateBar: View {
         let dx = target.x - engine.pose.x
         let dy = target.y - engine.pose.y
         let straight = (dx * dx + dy * dy).squareRoot()
-        let distance = routeHint?.distance ?? straight
+        let distance = routeHint?.distanceM ?? straight
         let aim = routeHint?.heading ?? atan2(dy, dx)
         let rel = wrapAngle(aim - engine.pose.heading)
 
