@@ -226,14 +226,6 @@ struct HomeView: View {
                        "PDF with photos, sizes, values") {
                 toolPick = .report
             }
-            actionCard("ruler", "Measure",
-                       "Distances and walking routes") {
-                toolPick = .measure
-            }
-            actionCard("arrow.left.and.right.square", "Will it fit?",
-                       "Check a move before lifting") {
-                toolPick = .fit
-            }
             actionCard("map", "Floor plan",
                        "Share the map as an image") {
                 toolPick = .floorplan

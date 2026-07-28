@@ -100,6 +100,7 @@ struct ToolsView: View {
                 }
             }
             .navigationTitle("Tools")
+            .brandBackground()
             .sheet(item: $toolPick) { tool in
                 RoomToolSheet(tool: tool, rooms: rooms)
             }

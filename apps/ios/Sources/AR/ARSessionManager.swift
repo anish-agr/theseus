@@ -234,9 +234,11 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
                                      height: y1 - y0)
                     // a frame swallowing most of the screen isn't a
                     // lock, it's saliency shrugging — treat as none
-                    // (field test 5: "usually just a big box")
-                    guard out.width < viewport.width * 0.72,
-                          out.height < viewport.height * 0.58 else {
+                    // (field test 5: "usually just a big box"; field
+                    // test 6 said the frame vanished too often, so
+                    // the ceiling is generous now)
+                    guard out.width < viewport.width * 0.88,
+                          out.height < viewport.height * 0.72 else {
                         return nil
                     }
                     out = out.insetBy(dx: out.width * 0.04,

@@ -55,6 +55,7 @@ struct ConditionView: View {
             }
         }
         .navigationTitle("Condition records")
+        .brandBackground()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -293,6 +294,8 @@ struct ConditionRecordView: View {
         }
         .navigationTitle("\(record.roomName) · \(record.kindTitle)")
         .navigationBarTitleDisplayMode(.inline)
+        .scrollDismissesKeyboard(.immediately)
+        .brandBackground()
         .sheet(item: $captureTag) { tag in
             CameraSheet { image in
                 addShot(image, tag: tag)

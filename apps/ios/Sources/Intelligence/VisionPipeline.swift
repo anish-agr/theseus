@@ -122,7 +122,7 @@ enum VisionPipeline {
                         b.boundingBox.midY - 0.5)
         }
         guard let box = best?.boundingBox,
-              box.insetBy(dx: -0.06, dy: -0.06).contains(centre) else {
+              box.insetBy(dx: -0.14, dy: -0.14).contains(centre) else {
             return nil
         }
         return box

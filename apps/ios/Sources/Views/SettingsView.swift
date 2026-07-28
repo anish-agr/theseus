@@ -10,7 +10,7 @@ struct SettingsView: View {
     @Query private var things: [Thing]
     @StateObject private var embedder = EmbedderManager.shared
     @ObservedObject private var ai = AIService.shared
-    @AppStorage("aiAutoName") private var aiAutoName = false
+    @AppStorage("scanMinimalUI") private var minimalUI = true
     @State private var keyDraft = ""
     @State private var aiTestState: AITestState = .idle
     @State private var modelChoices: [String] = []
@@ -85,6 +85,12 @@ struct SettingsView: View {
                     Text("Off means only the shutter button and voice "
                          + "save objects — the ring never fires on "
                          + "its own.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Toggle("Minimal scan interface", isOn: $minimalUI)
+                    Text("On (default): just the shutter and the "
+                         + "lock-on frame. Off adds the minimap, "
+                         + "voice, lens and hints.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -220,28 +226,19 @@ struct SettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(Color.brandDotCool)
             }
-            Toggle("Live mode: AI names each capture mid-scan",
-                   isOn: $aiAutoName)
-            Text("Off (default): scan fast, then identify everything "
-                 + "at once afterwards — Stuff → ✨.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         } header: {
             Text("AI")
         } footer: {
             if ai.kind == .gemini {
                 Text("Free: sign in at aistudio.google.com/apikey — no "
-                     + "card needed — and paste the key here. Unlocks "
-                     + "box itemizing, value estimates and \"what is "
-                     + "this\". Photos go only to the provider you "
-                     + "chose, and only when you tap an AI button — "
-                     + "or, with the toggle on, when a capture needs "
-                     + "a name the phone can't work out itself.")
+                     + "card needed — and paste the key here. Scan "
+                     + "fast, then identify everything at once with "
+                     + "Stuff → ✨. Photos go only to the provider "
+                     + "you chose, and only when you tap an AI "
+                     + "button.")
             } else {
                 Text("Photos go only to the provider you chose, and "
-                     + "only when you tap an AI button — or, with the "
-                     + "toggle on, when a capture needs a name the "
-                     + "phone can't work out itself.")
+                     + "only when you tap an AI button.")
             }
         }
         .onAppear {

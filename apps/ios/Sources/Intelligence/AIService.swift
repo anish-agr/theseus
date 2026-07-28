@@ -54,6 +54,13 @@ struct AIItem: Identifiable {
     var name: String
     var category: String
     var estimatedValue: Double?
+    /// 0…1, the model's own certainty.
+    var confidence: Double?
+    /// Which of the submitted photos it was seen in (0-based).
+    var photoIndex: Int = 0
+    /// Where in that photo, normalized 0…1 (x, y, w, h, top-left
+    /// origin) — lets one shelf photo become per-item cropped thumbs.
+    var box: CGRect?
 }
 
 struct AIIdentification {
@@ -62,6 +69,7 @@ struct AIIdentification {
     var summary: String
     var estimatedValue: Double?
     var valueNote: String
+    var confidence: Double?
 }
 
 enum AIError: LocalizedError {
@@ -181,6 +189,8 @@ final class AIService: ObservableObject {
         if let hint, !hint.isEmpty {
             prompt += "\nContext that may help: \(hint)"
         }
+        prompt += "\nAlso include \"confidence\": number 0-1, how "
+            + "sure you are."
         let text = try await visionCall(prompt: prompt, image: image,
                                         maxTokens: 1000)
         guard let obj = Self.jsonObject(in: text) else {
@@ -192,33 +202,61 @@ final class AIService: ObservableObject {
             summary: (obj["summary"] as? String) ?? "",
             estimatedValue: Self.number(
                 obj["estimated_value_\(currencyCode.lowercased())"]),
-            valueNote: (obj["value_note"] as? String) ?? "")
+            valueNote: (obj["value_note"] as? String) ?? "",
+            confidence: Self.number(obj["confidence"]))
     }
 
-    /// Photograph an open box → the box's contents, itemized.
-    func itemizeBox(image: UIImage) async throws -> [AIItem] {
+    /// Photograph an open box/shelf (several angles allowed) → the
+    /// contents, itemized, each with a location box so a crowded
+    /// shelf photo becomes per-item cropped thumbnails.
+    func itemizeBox(images: [UIImage]) async throws -> [AIItem] {
         let prompt = """
-        This photo shows the contents of a storage container (box, bin, \
-        drawer or shelf). List every distinct physical item you can \
-        actually see. Reply with ONLY a strict JSON array, no prose: \
-        [{"name": "short item name", "category": "one or two words", \
-        "estimated_value_\(currencyCode.lowercased())": number or null \
-        (typical used replacement value, \(currencyCode))}] \
-        Maximum 25 items. Skip the container itself.
+        These \(images.count) photo(s) show the contents of one \
+        storage container or shelf. List every distinct physical \
+        item you can actually see (an item visible in two photos is \
+        ONE item). Reply with ONLY a strict JSON array, no prose: \
+        [{"name": "short specific item name", \
+        "category": "one or two words", \
+        "estimated_value_\(currencyCode.lowercased())": number or \
+        null (typical used replacement value, \(currencyCode)), \
+        "confidence": number 0-1, \
+        "photo": photo number this item is best seen in (1-based), \
+        "box_2d": [ymin, xmin, ymax, xmax] integers 0-1000, the \
+        item's bounding box in that photo}] \
+        Maximum 30 items. Skip the container itself.
         """
-        let text = try await visionCall(prompt: prompt, image: image,
-                                        maxTokens: 2500)
+        let text = try await visionCall(prompt: prompt, images: images,
+                                        maxTokens: 4000)
         guard let arr = Self.jsonArray(in: text) else {
             throw AIError.badReply(text)
         }
         return arr.compactMap { entry in
             guard let name = entry["name"] as? String,
                   !name.isEmpty else { return nil }
+            var box: CGRect?
+            if let raw = entry["box_2d"] as? [Any], raw.count == 4 {
+                let vals = raw.compactMap { Self.anyNumber($0) }
+                if vals.count == 4 {
+                    // model convention [ymin, xmin, ymax, xmax]/1000
+                    let y0 = vals[0] / 1000, x0 = vals[1] / 1000
+                    let y1 = vals[2] / 1000, x1 = vals[3] / 1000
+                    if x1 > x0, y1 > y0 {
+                        box = CGRect(x: x0, y: y0,
+                                     width: x1 - x0, height: y1 - y0)
+                    }
+                }
+            }
+            let photo = (Self.anyNumber(entry["photo"]).map {
+                Int($0) - 1
+            }) ?? 0
             return AIItem(
                 name: name,
                 category: (entry["category"] as? String) ?? "object",
                 estimatedValue: Self.number(
-                    entry["estimated_value_\(currencyCode.lowercased())"]))
+                    entry["estimated_value_\(currencyCode.lowercased())"]),
+                confidence: Self.anyNumber(entry["confidence"]),
+                photoIndex: max(0, min(images.count - 1, photo)),
+                box: box)
         }
     }
 
@@ -276,7 +314,8 @@ final class AIService: ObservableObject {
             distinguishing details)", \
             "estimated_value_\(currencyCode.lowercased())": number or \
             null (typical used replacement value, \(currencyCode)), \
-            "value_note": "very short basis"}
+            "value_note": "very short basis", \
+            "confidence": number 0-1, how sure you are}
             """
             let text = try await visionCall(
                 prompt: prompt,
@@ -291,7 +330,8 @@ final class AIService: ObservableObject {
                     summary: (obj["summary"] as? String) ?? "",
                     estimatedValue: Self.number(
                         obj["estimated_value_\(currencyCode.lowercased())"]),
-                    valueNote: (obj["value_note"] as? String) ?? "")
+                    valueNote: (obj["value_note"] as? String) ?? "",
+                    confidence: Self.anyNumber(obj["confidence"]))
             }
         }
         return out
@@ -367,7 +407,7 @@ final class AIService: ObservableObject {
                 // free-tier per-MINUTE cap (field test 5) — Google
                 // says how long to wait; wait it and carry on
                 let delay = Self.retryDelay(in: body) ?? 20
-                guard delay <= 90 else {
+                guard delay <= 45 else {
                     throw AIError.http(429, body)
                 }
                 batchStatus = "Rate limit — waiting \(Int(delay)) s…"
@@ -647,11 +687,40 @@ final class AIService: ObservableObject {
         return String(text[start...end])
     }
 
+    /// Positive quantities (values, counts) — zero/negative is "none".
     static func number(_ any: Any?) -> Double? {
-        if let d = any as? Double { return d > 0 ? d : nil }
-        if let i = any as? Int { return i > 0 ? Double(i) : nil }
+        anyNumber(any).flatMap { $0 > 0 ? $0 : nil }
+    }
+
+    /// Any numeric — coordinates and confidences may be zero.
+    static func anyNumber(_ any: Any?) -> Double? {
+        if let d = any as? Double { return d }
+        if let i = any as? Int { return Double(i) }
         if let s = any as? String { return Double(s) }
         return nil
+    }
+
+    /// Upright-normalize then crop a normalized-rect region (small
+    /// padding) — per-item thumbnails out of one shelf photo, using
+    /// the model's own box_2d.
+    static func crop(_ image: UIImage, box: CGRect) -> UIImage? {
+        let size = image.size
+        // redraw first: CGImage cropping ignores EXIF orientation
+        let upright = UIGraphicsImageRenderer(size: size).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        guard let cg = upright.cgImage else { return nil }
+        let padded = box.insetBy(dx: -box.width * 0.06,
+                                 dy: -box.height * 0.06)
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        let rect = CGRect(
+            x: padded.minX * CGFloat(cg.width),
+            y: padded.minY * CGFloat(cg.height),
+            width: padded.width * CGFloat(cg.width),
+            height: padded.height * CGFloat(cg.height)).integral
+        guard rect.width > 8, rect.height > 8,
+              let cut = cg.cropping(to: rect) else { return nil }
+        return UIImage(cgImage: cut)
     }
 
     /// Cap the upload at ~1024 px / ~200 KB — plenty for recognition,

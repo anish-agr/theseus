@@ -18,7 +18,9 @@ enum SpotlightIndex {
         if let location {
             parts.append(location)
         } else if let room = thing.room {
-            parts.append("In the \(room.name)")
+            // no article: rooms have user names ("Anish"), and "In
+            // the Anish" reads wrong (field test 6)
+            parts.append("In \(room.name)")
         }
         if thing.widthM > 0 { parts.append(thing.sizeDescription) }
         parts.append("Theseus knows where this is")

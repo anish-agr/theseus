@@ -20,13 +20,19 @@ struct ScanView: View {
     @ObservedObject private var ai = AIService.shared
     @Query private var allThings: [Thing]
     @Query private var spots: [StorageSpot]
-    // default OFF: batch identification after the scan (AIReviewView)
-    // is the primary mode; live per-capture naming is the opt-in
-    @AppStorage("aiAutoName") private var aiAutoName = false
+    @Query(sort: \Room.lastScannedAt, order: .reverse)
+    private var rooms: [Room]
+    /// Fewer overlays = a camera you can actually read. Default ON:
+    /// shutter + top bar + lock brackets only (field test 6: "scan is
+    /// the only UI not clean").
+    @AppStorage("scanMinimalUI") private var minimalUI = true
+    /// The scanner shows a calm start page until you actually start —
+    /// no live camera, no overlays, no heat (field test 6).
+    @State private var scanning = false
+    @State private var newRoomName = ""
     @State private var card: CapturedObject?
     @State private var cardThing: Thing?
     @State private var cardWasNew = false
-    @State private var aiNaming = false
     @State private var renaming = false
     @State private var draftName = ""
     @State private var saveNotice: String?
@@ -50,7 +56,8 @@ struct ScanView: View {
             // saliency model doesn't have. Absent = no lock = the
             // dwell won't arm.
             GeometryReader { _ in
-                if let box = session.subjectBox, room != nil {
+                if scanning, let box = session.subjectBox,
+                   room != nil {
                     LockBrackets()
                         .stroke(lensOn ? Color.brandDot
                                        : Color.brandThread,
@@ -68,50 +75,56 @@ struct ScanView: View {
             .ignoresSafeArea()
             .allowsHitTesting(false)
 
-            reticle
-
-            VStack(spacing: 0) {
-                topBar
-                Spacer()
-                if voice.listening || voiceNotice != nil
-                    || voice.problem != nil {
-                    voiceChip
-                        .padding(.horizontal)
-                        .padding(.bottom, 6)
-                }
-                if let lensResult {
-                    lensCard(lensResult)
-                        .padding(.horizontal)
-                        .transition(.move(edge: .bottom).combined(
-                            with: .opacity))
-                }
-                if let card {
-                    captureCard(card)
-                        .padding(.horizontal)
-                        .transition(.move(edge: .bottom).combined(
-                            with: .opacity))
-                }
-                if engine.locateTarget != nil {
-                    LocateBar(active: selectedTab == 1)
-                        .padding(.horizontal)
-                        .padding(.bottom, 4)
-                }
-                HStack(alignment: .bottom) {
-                    hintBubble
+            if scanning {
+                VStack(spacing: 0) {
+                    topBar
                     Spacer()
-                    VStack(spacing: 10) {
-                        lensButton
-                        micButton
-                        shutterButton
-                        MinimapView(pins: minimapPins)
-                            .frame(width: 140, height: 140)
+                    if voice.listening || voiceNotice != nil
+                        || voice.problem != nil {
+                        voiceChip
+                            .padding(.horizontal)
+                            .padding(.bottom, 6)
                     }
+                    if let lensResult {
+                        lensCard(lensResult)
+                            .padding(.horizontal)
+                            .transition(.move(edge: .bottom).combined(
+                                with: .opacity))
+                    }
+                    if let card {
+                        captureCard(card)
+                            .padding(.horizontal)
+                            .transition(.move(edge: .bottom).combined(
+                                with: .opacity))
+                    }
+                    if engine.locateTarget != nil {
+                        LocateBar(active: selectedTab == 1)
+                            .padding(.horizontal)
+                            .padding(.bottom, 4)
+                    }
+                    HStack(alignment: .bottom) {
+                        if !minimalUI { hintBubble }
+                        Spacer()
+                        VStack(spacing: 10) {
+                            if !minimalUI {
+                                lensButton
+                                micButton
+                            }
+                            shutterButton
+                            if !minimalUI {
+                                MinimapView(pins: minimapPins)
+                                    .frame(width: 140, height: 140)
+                            }
+                        }
+                    }
+                    .padding()
                 }
-                .padding()
             }
 
-            if room == nil { noRoomOverlay }
-            if showCoach || (!coachSeen && room != nil) { coachOverlay }
+            if !scanning { startPage }
+            if scanning, showCoach || (!coachSeen && room != nil) {
+                coachOverlay
+            }
         }
         // camera-first: the tab bar keeps its icons but loses its
         // slab, fading into the feed instead of sitting on it
@@ -124,15 +137,25 @@ struct ScanView: View {
             session.capture = capture
             voice.onCommand = { handleVoice($0) }
             syncRoom()
+            // the camera stays dark until Start is tapped; the AR
+            // view may finish initializing after onAppear, so the
+            // pause lands just behind it
+            if !scanning {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    if !scanning, !engine.isGuiding {
+                        session.pauseSession()
+                    }
+                }
+            }
         }
         .onChange(of: room?.id) { _, _ in syncRoom() }
-        // thermal discipline: the camera pipeline runs ONLY while the
-        // scanner is on screen (or guidance is live) — otherwise it
-        // cooks the phone into throttling within minutes
+        // thermal discipline: the camera pipeline runs ONLY while a
+        // scan is actually live and on screen (or guidance is) —
+        // otherwise it cooks the phone into throttling within minutes
         .onChange(of: selectedTab) { _, tab in
-            if tab == 1 {
+            if tab == 1, scanning {
                 session.resumeSession()
-            } else if !engine.isGuiding {
+            } else if tab != 1, !engine.isGuiding {
                 persist()
                 session.pauseSession()
             }
@@ -140,8 +163,16 @@ struct ScanView: View {
         .onChange(of: engine.isGuiding) { _, guiding in
             if guiding {
                 session.resumeSession()
-            } else if selectedTab != 1 {
+            } else if selectedTab != 1 || !scanning {
                 session.pauseSession()
+            }
+        }
+        // the summary sheet (and its AI pass) deserves a cool phone
+        .onChange(of: showSummary) { _, open in
+            if open {
+                session.pauseSession()
+            } else if scanning, selectedTab == 1 {
+                session.resumeSession()
             }
         }
         // onReceive rather than onChange: CapturedObject carries a
@@ -186,26 +217,11 @@ struct ScanView: View {
             // commit, because it's async — it quietly upgrades weak
             // auto-names and only ever asks the user when IT failed
             // too.
-            let wantAI = aiAutoName && ai.isConfigured
-                && !thing.userNamed && thing.autoConfidence < 0.45
-            if thing.displayName == "Unnamed object" {
-                if wantAI {
-                    aiName(thing, captured: new, askIfFailed: true)
-                } else if ai.isConfigured {
-                    // batch-later mode: NEVER interrupt the scan with
-                    // a naming popup — the ✨ pass names it properly
-                    // afterwards (field test 5)
-                    autoDismissCard()
-                } else {
-                    draftName = ""
-                    renaming = true
-                }
-            } else {
-                autoDismissCard()
-                if wantAI {
-                    aiName(thing, captured: new, askIfFailed: false)
-                }
-            }
+            // NOTHING interrupts a scan (field test 6): no naming
+            // popups, no live AI calls. The ✨ batch pass names
+            // everything properly afterwards; Rename on the card is
+            // there for the impatient.
+            autoDismissCard()
         }
         .onDisappear(perform: persist)
         .onChange(of: scenePhase) { _, phase in
@@ -228,7 +244,8 @@ struct ScanView: View {
             Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $showSummary) {
-            ScanSummarySheet(room: room, selectedTab: $selectedTab)
+            ScanSummarySheet(room: room, selectedTab: $selectedTab,
+                             onEndScan: { endScan() })
                 .presentationDetents([.medium, .large])
         }
         .sheet(item: $openedSpotID) { id in
@@ -256,40 +273,125 @@ struct ScanView: View {
         }
     }
 
-    private var reticle: some View {
-        ZStack {
-            Circle()
-                .stroke(.white.opacity(0.6), lineWidth: 2)
-                .frame(width: 74, height: 74)
-            Circle()
-                .trim(from: 0, to: capture.dwellProgress)
-                .stroke(lensOn ? Color.brandDot : Color.brandThread,
-                        style: StrokeStyle(lineWidth: 5,
-                                           lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .frame(width: 74, height: 74)
-            if capture.busy {
-                ThreadLoadingView(size: 34)
-            } else {
-                Circle().fill(.white.opacity(0.85))
-                    .frame(width: 5, height: 5)
+    /// The calm front door: pick or create a room, then Start. No
+    /// camera, no overlays, no heat until you mean it.
+    private var startPage: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            ThreadLogoView()
+                .frame(width: 90, height: 90)
+            Text("Scan a room")
+                .font(.title.bold())
+            Text("Sweep the floor, point at things, and the room "
+                 + "becomes part of your home's memory.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            VStack(spacing: 10) {
+                ForEach(rooms.prefix(4)) { candidate in
+                    Button {
+                        room = candidate
+                    } label: {
+                        HStack {
+                            Image(systemName: room?.id == candidate.id
+                                  ? "circle.inset.filled" : "circle")
+                                .foregroundStyle(Color.brandThread)
+                            Text(candidate.name)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text("\(candidate.things.count) things")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(12)
+                        .background(.thinMaterial,
+                                    in: RoundedRectangle(
+                                        cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
+                HStack {
+                    TextField("New room — \"Bedroom\"…",
+                              text: $newRoomName)
+                        .padding(12)
+                        .background(.thinMaterial,
+                                    in: RoundedRectangle(
+                                        cornerRadius: 12))
+                    Button("Create") {
+                        let name = newRoomName.trimmingCharacters(
+                            in: .whitespaces)
+                        guard !name.isEmpty else { return }
+                        let created = Room(name: name)
+                        context.insert(created)
+                        room = created
+                        newRoomName = ""
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
+            .padding(.horizontal, 24)
+
+            Button {
+                startScan()
+            } label: {
+                Text(room == nil
+                     ? "Pick a room first"
+                     : "Start scanning \(room?.name ?? "")")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(room == nil)
+            .padding(.horizontal, 24)
+            Spacer()
         }
-        .accessibilityLabel("Aim reticle. Hold steady on an object to "
-                            + "remember it, or use the shutter button.")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            LinearGradient(colors: [Color.brandIndigo,
+                                    Color.brandIndigoDeep],
+                           startPoint: .top, endPoint: .bottom)
+            .ignoresSafeArea())
     }
 
-    /// Deliberate capture for when holding steady is awkward — kneeling
-    /// under a desk, holding a pet, one-handed.
+    private func startScan() {
+        guard room != nil else { return }
+        syncRoom()
+        session.resumeSession()
+        scanning = true
+    }
+
+    private func endScan() {
+        persist()
+        session.pauseSession()
+        scanning = false
+    }
+
+    /// The one control that matters: capture. The dwell ring lives on
+    /// it now — the old center reticle is gone (field test 6).
     private var shutterButton: some View {
         Button {
             session.captureNow()
         } label: {
             ZStack {
                 Circle().fill(.white.opacity(0.25))
-                    .frame(width: 58, height: 58)
-                Circle().fill(.white)
-                    .frame(width: 46, height: 46)
+                    .frame(width: 62, height: 62)
+                Circle()
+                    .trim(from: 0, to: capture.dwellProgress)
+                    .stroke(lensOn ? Color.brandDot
+                                   : Color.brandThread,
+                            style: StrokeStyle(lineWidth: 4,
+                                               lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 62, height: 62)
+                if capture.busy {
+                    ThreadLoadingView(size: 30)
+                } else {
+                    Circle().fill(.white)
+                        .frame(width: 48, height: 48)
+                }
             }
         }
         .disabled(capture.busy || !session.floorFound)
@@ -466,7 +568,7 @@ struct ScanView: View {
         if let spotName {
             parts.append("lives in \(spotName)")
         } else if let matchRoom = match.room {
-            parts.append("usually in the \(matchRoom.name)")
+            parts.append("usually in \(matchRoom.name)")
         }
         if let price = match.price {
             parts.append(currencyShort(price))
@@ -627,16 +729,16 @@ struct ScanView: View {
                 .controlSize(.small)
                 .tint(engine.scanComplete
                       ? .green : Color.brandThread)
-                // the plain way OUT — field test 3: leaving the
-                // scanner shouldn't require ceremony
+                // the plain way OUT — ends the scan and goes Home;
+                // the Scan tab returns to its start page
                 Button {
-                    persist()
+                    endScan()
                     selectedTab = 0
                 } label: {
                     Image(systemName: "house")
                         .font(.body)
                 }
-                .accessibilityLabel("Back to Home")
+                .accessibilityLabel("End scan and go Home")
             }
             if engine.trackingLimited {
                 Text(session.trackingState)
@@ -710,13 +812,8 @@ struct ScanView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(cardThing?.displayName ?? "Object")
-                        .font(.headline).lineLimit(1)
-                    if aiNaming {
-                        ThreadLoadingView(size: 16)
-                    }
-                }
+                Text(cardThing?.displayName ?? "Object")
+                    .font(.headline).lineLimit(1)
                 Text(sizeLine(captured))
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -744,56 +841,6 @@ struct ScanView: View {
         .padding(10)
         .background(.ultraThinMaterial,
                     in: RoundedRectangle(cornerRadius: 14))
-    }
-
-    /// The AI step of the naming cascade: identify the crop, apply
-    /// name + category + one-line description (which SmartSearch then
-    /// searches — "blue ceramic mug" works forever after), and fill
-    /// the value if none is set. Runs automatically when on-device
-    /// recognition is unsure; a user-given name always outranks it.
-    private func aiName(_ thing: Thing, captured: CapturedObject,
-                        askIfFailed: Bool) {
-        guard let image = captured.recognition.image else {
-            if askIfFailed {
-                draftName = ""
-                renaming = true
-            }
-            return
-        }
-        aiNaming = true
-        Task {
-            defer { aiNaming = false }
-            do {
-                let idn = try await ai.identify(
-                    image: image,
-                    hint: captured.recognition.text.isEmpty
-                        ? nil
-                        : "Text on it: \(captured.recognition.text)")
-                guard !thing.isDeleted, !thing.userNamed else { return }
-                thing.displayName = idn.name
-                thing.autoLabel = idn.name
-                // sticky enough that a later weak classifier glance
-                // doesn't stomp the AI's answer
-                thing.autoConfidence = max(thing.autoConfidence, 0.75)
-                thing.category = idn.category
-                thing.aiSummary = idn.summary
-                if thing.price == nil, let value = idn.estimatedValue {
-                    thing.price = value
-                    thing.priceSource = "ai"
-                }
-                SpotlightIndex.index(thing)
-                if cardThing?.id == thing.id {
-                    draftName = thing.displayName
-                }
-            } catch {
-                if askIfFailed, !thing.isDeleted,
-                   thing.displayName == "Unnamed object",
-                   cardThing?.id == thing.id {
-                    draftName = ""
-                    renaming = true
-                }
-            }
-        }
     }
 
     /// "Don't save this item" — deletes the thing the capture just
@@ -825,27 +872,6 @@ struct ScanView: View {
     }
 
     // ---- overlays --------------------------------------------------------
-
-    private var noRoomOverlay: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "square.grid.2x2")
-                .font(.system(size: 44))
-                .foregroundStyle(Color.brandThread)
-            Text("Pick a room first")
-                .font(.title3.bold())
-            Text("Every scan belongs to a room so its map and "
-                 + "things stay together.")
-                .font(.callout)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-            Button("Choose a room") { selectedTab = 3 }
-                .buttonStyle(.borderedProminent)
-        }
-        .padding(28)
-        .background(.ultraThinMaterial,
-                    in: RoundedRectangle(cornerRadius: 20))
-        .padding(40)
-    }
 
     private var coachOverlay: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -1029,6 +1055,9 @@ struct ScanSummarySheet: View {
     @Environment(\.dismiss) private var dismiss
     let room: Room?
     @Binding var selectedTab: Int
+    /// Every exit except "Keep scanning" ends the scan — the Scan tab
+    /// goes back to its start page instead of a live camera.
+    var onEndScan: () -> Void = {}
     @State private var showAIReview = false
 
     var body: some View {
@@ -1066,10 +1095,11 @@ struct ScanSummarySheet: View {
             .padding(.horizontal)
 
             Button {
+                onEndScan()
                 selectedTab = 2
                 dismiss()
             } label: {
-                Label("See everything I saved",
+                Label("Done — see everything I saved",
                       systemImage: "shippingbox")
                     .frame(maxWidth: .infinity)
             }

@@ -28,7 +28,7 @@ struct MemoryLaneView: View {
                 id: "new-\(thing.id)", date: thing.firstSeenAt,
                 icon: "sparkle",
                 title: thing.displayName,
-                subtitle: thing.room.map { "saved in the \($0.name)" }
+                subtitle: thing.room.map { "saved in \($0.name)" }
                     ?? "saved",
                 thingID: thing.id))
             for s in thing.sightings where s.movedSincePrevious {
@@ -124,5 +124,6 @@ struct MemoryLaneView: View {
             }
         }
         .navigationTitle("Memory lane")
+        .brandBackground()
     }
 }

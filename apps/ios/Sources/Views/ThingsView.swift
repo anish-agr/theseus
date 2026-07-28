@@ -14,6 +14,7 @@ struct ThingsView: View {
     @Binding var selectedTab: Int
     @State private var query = ""
     @State private var filter: Filter = .all
+    @State private var addingManually = false
 
     private func spotName(_ thing: Thing) -> String? {
         guard let id = thing.storageID else { return nil }
@@ -54,6 +55,7 @@ struct ThingsView: View {
                 .onDelete(perform: delete)
             }
             .navigationTitle("Stuff")
+            .brandBackground()
             .searchable(text: $query, prompt: "Search everything you own")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -63,6 +65,14 @@ struct ThingsView: View {
                         Image(systemName: "sparkles")
                     }
                     .accessibilityLabel("Identify items with AI")
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        addingManually = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("Add an item by hand")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Picker("Filter", selection: $filter) {
@@ -78,10 +88,13 @@ struct ThingsView: View {
                     ContentUnavailableView(
                         "Nothing logged yet",
                         systemImage: "shippingbox",
-                        description: Text("Go to Scan and hold the "
-                                          + "reticle on something for a "
-                                          + "moment."))
+                        description: Text("Scan a room and point at "
+                                          + "things — or add one by "
+                                          + "hand with +."))
                 }
+            }
+            .sheet(isPresented: $addingManually) {
+                AddThingSheet()
             }
         }
     }
@@ -131,6 +144,108 @@ struct ThingsView: View {
             thingID: thing.id, name: thing.displayName,
             x: thing.positionX, y: thing.positionY)
         selectedTab = 1
+    }
+}
+
+/// Not everything gets scanned — heirlooms in the attic, the bike in
+/// the garage you'll photograph later. Manual entry keeps the
+/// inventory honest and complete (field test 6).
+struct AddThingSheet: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    @Query private var rooms: [Room]
+    @Query private var spots: [StorageSpot]
+    @State private var name = ""
+    @State private var priceDraft = ""
+    @State private var roomID: UUID?
+    @State private var spotID: UUID?
+    @State private var photo: UIImage?
+    @State private var showCamera = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Name — \"Grandma's clock\"…", text: $name)
+                HStack {
+                    Text(Locale.current.currencySymbol ?? "$")
+                        .foregroundStyle(.secondary)
+                    TextField("Value (optional)", text: $priceDraft)
+                        .keyboardType(.decimalPad)
+                }
+                if !rooms.isEmpty {
+                    Picker("Room", selection: $roomID) {
+                        Text("None").tag(UUID?.none)
+                        ForEach(rooms) { room in
+                            Text(room.name).tag(UUID?.some(room.id))
+                        }
+                    }
+                }
+                if !spots.isEmpty {
+                    Picker("Storage spot", selection: $spotID) {
+                        Text("None").tag(UUID?.none)
+                        ForEach(spots) { spot in
+                            Text(spot.name).tag(UUID?.some(spot.id))
+                        }
+                    }
+                }
+                Button {
+                    showCamera = true
+                } label: {
+                    Label(photo == nil ? "Add a photo"
+                                       : "Retake photo",
+                          systemImage: "camera")
+                }
+                if let photo {
+                    Image(uiImage: photo)
+                        .resizable().scaledToFit()
+                        .frame(maxHeight: 160)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            .scrollDismissesKeyboard(.immediately)
+            .navigationTitle("Add an item")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") { save() }
+                        .disabled(name.trimmingCharacters(
+                            in: .whitespaces).isEmpty)
+                }
+            }
+            .sheet(isPresented: $showCamera) {
+                CameraSheet { photo = $0 }
+            }
+        }
+    }
+
+    private func save() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let thing = Thing(displayName: trimmed, autoLabel: trimmed,
+                          autoConfidence: 0, category: "object",
+                          positionX: 0, positionY: 0, heightM: 0,
+                          widthM: 0, sizeHeightM: 0, sizeConfidence: 0)
+        thing.hasPosition = false
+        thing.userNamed = true
+        thing.storageID = spotID
+        if let roomID {
+            thing.room = rooms.first { $0.id == roomID }
+        }
+        if let price = Double(priceDraft.replacingOccurrences(
+            of: ",", with: ".")) {
+            thing.price = price
+        }
+        context.insert(thing)
+        if let photo {
+            Store.saveThumb(photo, thingID: thing.id)
+        }
+        let location = spotID.flatMap { id in
+            spots.first { $0.id == id }.map { "In \($0.name)" }
+        }
+        SpotlightIndex.index(thing, location: location)
+        dismiss()
     }
 }
 
@@ -257,6 +372,15 @@ struct ThingDetailView: View {
                     LabeledContent("Recognised as",
                                    value: thing.autoLabel)
                 }
+                if thing.aiSummary != nil, thing.autoConfidence > 0 {
+                    LabeledContent("AI confidence") {
+                        Text("\(Int(thing.autoConfidence * 100))%")
+                            .foregroundStyle(
+                                thing.autoConfidence >= 0.7
+                                ? AnyShapeStyle(Color.brandDot)
+                                : AnyShapeStyle(.secondary))
+                    }
+                }
             }
             Section("Value") {
                 HStack {
@@ -288,6 +412,13 @@ struct ThingDetailView: View {
                         }
                     }
                     .disabled(estimating)
+                    if estimating, let status = ai.batchStatus {
+                        // usually "Rate limit — waiting Ns": the wait
+                        // is the free tier, not a hang
+                        Text(status)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if let estimateNote {
                         Text(estimateNote)
                             .font(.caption)
@@ -338,17 +469,26 @@ struct ThingDetailView: View {
                 }
             }
             Section("Insurance") {
-                if let serial = thing.serialNumber {
-                    LabeledContent("Serial") {
-                        Text(serial).textSelection(.enabled)
-                            .font(.callout.monospaced())
-                    }
+                HStack {
+                    Text("Serial")
+                        .foregroundStyle(.secondary)
+                    TextField("Type or scan it",
+                              text: Binding(
+                                get: { thing.serialNumber ?? "" },
+                                set: {
+                                    thing.serialNumber =
+                                        $0.isEmpty ? nil : $0
+                                }))
+                        .font(.callout.monospaced())
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.characters)
+                        .multilineTextAlignment(.trailing)
                 }
                 Button {
                     scanningSerial = true
                 } label: {
                     Label(thing.serialNumber == nil
-                          ? "Scan serial number"
+                          ? "Scan serial number with the camera"
                           : "Re-scan serial",
                           systemImage: "number.square")
                 }
@@ -440,6 +580,7 @@ struct ThingDetailView: View {
         }
         .navigationTitle(thing.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .scrollDismissesKeyboard(.immediately)
         .onAppear {
             if let price = thing.price {
                 priceDraft = price == price.rounded()

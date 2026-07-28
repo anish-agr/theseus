@@ -276,7 +276,19 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
   partner/landlord; opens without the app.
 - **FR-13.6** 🧪 Gemini calls send thinkingBudget 0 — thinking models
   otherwise burn the whole output budget on reasoning and return
-  empty content (MAX_TOKENS, field test 4).
+  empty content (MAX_TOKENS, field test 4). If a model generation
+  rejects the knob (400), it is dropped and remembered; 429s wait
+  the server-specified delay and retry; batches pace 8 s apart.
+- **FR-13.7** 🧪 The scanner opens on a START PAGE (pick/create room,
+  Start) — no camera until then, none after the scan ends. Minimal
+  UI by default (shutter + lock brackets + top bar); the full
+  overlay set is a Settings toggle. No naming popups mid-scan, ever:
+  batch identification (✨) is the naming path. The dwell ring lives
+  on the shutter button.
+- **FR-13.8** 🧪 Storage itemizing accepts several photos per spot;
+  each accepted item stores the model's confidence and a thumbnail
+  cropped from its box_2d region — one shelf photo becomes per-item
+  photos. Manual entry exists everywhere (Stuff +, spot quick-add).
 
 ## NFR (non-functional)
 

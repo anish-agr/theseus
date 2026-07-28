@@ -142,6 +142,7 @@ struct InsuranceView: View {
             }
         }
         .navigationTitle("Insurance")
+        .brandBackground()
         .sheet(item: $shareURL) { url in
             ShareURLSheet(url: url)
         }

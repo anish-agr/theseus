@@ -27,7 +27,9 @@ func applyBatchIdentification(_ targets: [Thing],
         if !thing.userNamed {
             thing.displayName = idn.name
             thing.autoLabel = idn.name
-            thing.autoConfidence = max(thing.autoConfidence, 0.75)
+            // the model's own certainty, shown on the detail screen
+            thing.autoConfidence = idn.confidence
+                ?? max(thing.autoConfidence, 0.75)
         }
         thing.category = idn.category
         thing.aiSummary = idn.summary

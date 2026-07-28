@@ -37,6 +37,7 @@ struct StorageView: View {
             .onDelete(perform: delete)
         }
         .navigationTitle("Storage")
+        .brandBackground()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -196,7 +197,10 @@ struct SpotDetailView: View {
     @State private var proposed: [AIItem] = []
     @State private var picked: Set<UUID> = []
     @State private var aiError: String?
-    @State private var boxPhoto: UIImage?
+    /// Several angles of one shelf/box; the AI reads them together
+    /// and each accepted item gets a thumbnail cropped from the
+    /// photo it was seen in.
+    @State private var pendingPhotos: [UIImage] = []
     @State private var addingChild = false
     @State private var quickName = ""
     @State private var labelURL: URL?
@@ -226,14 +230,47 @@ struct SpotDetailView: View {
                 Button {
                     showCamera = true
                 } label: {
-                    Label(ai.isConfigured
-                          ? "Photograph contents — AI itemizes"
-                          : "Photograph contents",
+                    Label(pendingPhotos.isEmpty
+                          ? "Photograph contents"
+                          : "Add another angle (\(pendingPhotos.count) so far)",
                           systemImage: "camera.on.rectangle")
                 }
+                if !pendingPhotos.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(pendingPhotos.enumerated()),
+                                    id: \.offset) { _, photo in
+                                Image(uiImage: photo)
+                                    .resizable().scaledToFill()
+                                    .frame(width: 54, height: 54)
+                                    .clipShape(RoundedRectangle(
+                                        cornerRadius: 8))
+                            }
+                        }
+                    }
+                    Button {
+                        itemize()
+                    } label: {
+                        HStack {
+                            Label("Itemize \(pendingPhotos.count) "
+                                  + "photo(s) with AI",
+                                  systemImage: "sparkles")
+                            Spacer()
+                            if itemizing {
+                                ThreadLoadingView(size: 24)
+                            }
+                        }
+                    }
+                    .disabled(!ai.isConfigured || itemizing)
+                    if itemizing, let status = ai.batchStatus {
+                        Text(status)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 if !ai.isConfigured {
-                    Text("Add a free AI key in Settings and one photo "
-                         + "of the open box becomes a full contents "
+                    Text("Add a free AI key in Settings and photos "
+                         + "of the open box become a full contents "
                          + "list.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -256,23 +293,8 @@ struct SpotDetailView: View {
                      + "the iPhone camera at it opens this list.")
             }
 
-            if itemizing {
-                Section {
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 8) {
-                            ThreadLoadingView(size: 56)
-                            Text("Reading the \(spot.kind)…")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                }
-            }
-
             if !proposed.isEmpty {
-                Section("Found in the photo — keep what's right") {
+                Section("Found in the photos — keep what's right") {
                     ForEach(proposed) { item in
                         Button {
                             if picked.contains(item.id) {
@@ -281,20 +303,43 @@ struct SpotDetailView: View {
                                 picked.insert(item.id)
                             }
                         } label: {
-                            HStack {
+                            HStack(spacing: 10) {
                                 Image(systemName: picked.contains(item.id)
                                       ? "circle.inset.filled" : "circle")
                                     .foregroundStyle(Color.brandThread)
+                                if let box = item.box,
+                                   item.photoIndex < pendingPhotos.count,
+                                   let thumb = AIService.crop(
+                                    pendingPhotos[item.photoIndex],
+                                    box: box) {
+                                    Image(uiImage: thumb)
+                                        .resizable().scaledToFill()
+                                        .frame(width: 38, height: 38)
+                                        .clipShape(RoundedRectangle(
+                                            cornerRadius: 7))
+                                }
                                 Text(item.name)
                                     .foregroundStyle(.primary)
                                 Spacer()
-                                if let v = item.estimatedValue {
-                                    Text(v.formatted(.currency(
-                                        code: Locale.current.currency?
-                                            .identifier ?? "USD")
-                                        .precision(.fractionLength(0))))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                VStack(alignment: .trailing,
+                                       spacing: 1) {
+                                    if let v = item.estimatedValue {
+                                        Text(v.formatted(.currency(
+                                            code: Locale.current
+                                                .currency?.identifier
+                                                ?? "USD")
+                                            .precision(
+                                                .fractionLength(0))))
+                                            .font(.caption)
+                                            .foregroundStyle(
+                                                .secondary)
+                                    }
+                                    if let c = item.confidence {
+                                        Text("\(Int(c * 100))% sure")
+                                            .font(.caption2)
+                                            .foregroundStyle(
+                                                .tertiary)
+                                    }
                                 }
                             }
                         }
@@ -388,13 +433,16 @@ struct SpotDetailView: View {
         }
         .navigationTitle(spot.name)
         .navigationBarTitleDisplayMode(.inline)
+        .scrollDismissesKeyboard(.immediately)
+        .brandBackground()
         .sheet(isPresented: $showCamera) {
             CameraSheet { image in
-                boxPhoto = image
-                if let data = image.jpegData(compressionQuality: 0.8) {
+                pendingPhotos.append(image)
+                if pendingPhotos.count == 1,
+                   let data = image.jpegData(
+                    compressionQuality: 0.8) {
                     Store.saveSpotPhoto(data, spotID: spot.id)
                 }
-                if ai.isConfigured { itemize(image) }
             }
         }
         .sheet(isPresented: $addingChild) {
@@ -413,13 +461,15 @@ struct SpotDetailView: View {
         quickName = ""
     }
 
-    private func itemize(_ image: UIImage) {
+    private func itemize() {
+        guard !pendingPhotos.isEmpty else { return }
         itemizing = true
         aiError = nil
         proposed = []
         Task {
             do {
-                let items = try await ai.itemizeBox(image: image)
+                let items = try await ai.itemizeBox(
+                    images: pendingPhotos)
                 proposed = items
                 picked = Set(items.map(\.id))
                 if items.isEmpty {
@@ -435,17 +485,30 @@ struct SpotDetailView: View {
 
     private func acceptProposed() {
         for item in proposed where picked.contains(item.id) {
-            insertThing(name: item.name, category: item.category,
-                        value: item.estimatedValue, source: "ai")
+            let thing = insertThing(
+                name: item.name, category: item.category,
+                value: item.estimatedValue, source: "ai")
+            if let c = item.confidence {
+                thing.autoConfidence = c
+            }
+            // its own thumbnail, cropped out of the shelf photo
+            if let box = item.box,
+               item.photoIndex < pendingPhotos.count,
+               let thumb = AIService.crop(
+                pendingPhotos[item.photoIndex], box: box) {
+                Store.saveThumb(thumb, thingID: thing.id)
+            }
         }
         proposed = []
         picked = []
+        pendingPhotos = []
     }
 
     /// Contents have a home (this spot) but no floor-plan pin — that is
     /// the entire point of storage memory.
+    @discardableResult
     private func insertThing(name: String, category: String,
-                             value: Double?, source: String) {
+                             value: Double?, source: String) -> Thing {
         let thing = Thing(displayName: name, autoLabel: name,
                           autoConfidence: 0, category: category,
                           positionX: 0, positionY: 0, heightM: 0,
@@ -460,6 +523,7 @@ struct SpotDetailView: View {
         }
         context.insert(thing)
         SpotlightIndex.index(thing, location: "In \(spot.name)")
+        return thing
     }
 }
 
