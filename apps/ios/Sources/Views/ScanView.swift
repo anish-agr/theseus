@@ -16,6 +16,10 @@ struct ScanView: View {
     @AppStorage("scanCoachSeen") private var coachSeen = false
     @StateObject private var session = ARSessionManager()
     @StateObject private var capture = ObjectCapture()
+    @StateObject private var voice = VoiceControl()
+    @ObservedObject private var ai = AIService.shared
+    @Query private var allThings: [Thing]
+    @Query private var spots: [StorageSpot]
     @State private var card: CapturedObject?
     @State private var cardThing: Thing?
     @State private var renaming = false
@@ -23,6 +27,13 @@ struct ScanView: View {
     @State private var saveNotice: String?
     @State private var showCoach = false
     @State private var showSummary = false
+    // lens: look, don't save
+    @State private var lensOn = false
+    @State private var lensResult: LensResult?
+    @State private var lensAI: AIIdentification?
+    @State private var lensBusy = false
+    @State private var voiceNotice: String?
+    @State private var openedSpotID: UUID?
 
     var body: some View {
         ZStack {
@@ -34,6 +45,18 @@ struct ScanView: View {
             VStack(spacing: 0) {
                 topBar
                 Spacer()
+                if voice.listening || voiceNotice != nil
+                    || voice.problem != nil {
+                    voiceChip
+                        .padding(.horizontal)
+                        .padding(.bottom, 6)
+                }
+                if let lensResult {
+                    lensCard(lensResult)
+                        .padding(.horizontal)
+                        .transition(.move(edge: .bottom).combined(
+                            with: .opacity))
+                }
                 if let card {
                     captureCard(card)
                         .padding(.horizontal)
@@ -49,6 +72,8 @@ struct ScanView: View {
                     hintBubble
                     Spacer()
                     VStack(spacing: 10) {
+                        lensButton
+                        micButton
                         shutterButton
                         MinimapView(pins: minimapPins)
                             .frame(width: 140, height: 140)
@@ -66,13 +91,37 @@ struct ScanView: View {
         .onAppear {
             session.engine = engine
             session.capture = capture
+            voice.onCommand = { handleVoice($0) }
             syncRoom()
         }
         .onChange(of: room?.id) { _, _ in syncRoom() }
         // onReceive rather than onChange: CapturedObject carries a
         // UIImage and is deliberately not Equatable
         .onReceive(session.$pendingCapture) { new in
-            guard let new, let room else { return }
+            guard let new else { return }
+            // a Theseus QR label is a doorway, not an object: pointing
+            // the camera at a box label opens the box
+            if let code = new.recognition.barcode,
+               code.hasPrefix("theseus://spot/"),
+               let id = UUID(uuidString: String(
+                code.dropFirst("theseus://spot/".count))) {
+                session.pendingCapture = nil
+                openedSpotID = id
+                UIImpactFeedbackGenerator(style: .medium)
+                    .impactOccurred()
+                return
+            }
+            // lens mode looks things up instead of saving them
+            if lensOn {
+                session.pendingCapture = nil
+                lensAI = nil
+                lensResult = LensResult.lookup(new, things: allThings,
+                                               spots: spots)
+                UIImpactFeedbackGenerator(style: .light)
+                    .impactOccurred()
+                return
+            }
+            guard let room else { return }
             let thing = capture.commit(new, room: room, context: context)
             room.lastScannedAt = Date()
             card = new
@@ -108,6 +157,9 @@ struct ScanView: View {
             ScanSummarySheet(room: room, selectedTab: $selectedTab)
                 .presentationDetents([.medium, .large])
         }
+        .sheet(item: $openedSpotID) { id in
+            SpotByIDSheet(id: id)
+        }
     }
 
     // ---- pieces ----------------------------------------------------------
@@ -135,12 +187,13 @@ struct ScanView: View {
                 .frame(width: 74, height: 74)
             Circle()
                 .trim(from: 0, to: capture.dwellProgress)
-                .stroke(Color.cyan, style: StrokeStyle(lineWidth: 5,
-                                                       lineCap: .round))
+                .stroke(lensOn ? Color.brandDot : Color.brandThread,
+                        style: StrokeStyle(lineWidth: 5,
+                                           lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .frame(width: 74, height: 74)
             if capture.busy {
-                ProgressView().tint(.cyan)
+                ThreadLoadingView(size: 34)
             } else {
                 Circle().fill(.white.opacity(0.85))
                     .frame(width: 5, height: 5)
@@ -166,6 +219,307 @@ struct ScanView: View {
         .disabled(capture.busy || !session.floorFound)
         .opacity(session.floorFound ? 1 : 0.4)
         .accessibilityLabel("Capture what the camera is pointing at")
+    }
+
+    /// Lens: point at anything and ask, without saving. Recognizes
+    /// YOUR stuff by its visual fingerprint; the AI answers for
+    /// everything else.
+    private var lensButton: some View {
+        Button {
+            lensOn.toggle()
+            if !lensOn { lensResult = nil }
+        } label: {
+            Image(systemName: lensOn
+                  ? "sparkle.magnifyingglass" : "magnifyingglass")
+                .font(.title3)
+                .frame(width: 44, height: 44)
+                .background(lensOn
+                            ? AnyShapeStyle(Color.brandThread)
+                            : AnyShapeStyle(.ultraThinMaterial),
+                            in: Circle())
+                .foregroundStyle(lensOn ? .black : .white)
+        }
+        .accessibilityLabel(lensOn
+                            ? "Lens on — captures identify instead "
+                            + "of saving"
+                            : "Turn on the lens")
+    }
+
+    private var micButton: some View {
+        Button {
+            voice.toggle()
+        } label: {
+            Image(systemName: voice.listening ? "mic.fill" : "mic")
+                .font(.title3)
+                .frame(width: 44, height: 44)
+                .background(voice.listening
+                            ? AnyShapeStyle(Color.brandDot)
+                            : AnyShapeStyle(.ultraThinMaterial),
+                            in: Circle())
+                .foregroundStyle(voice.listening ? .black : .white)
+        }
+        .accessibilityLabel(voice.listening
+                            ? "Listening — tap to finish"
+                            : "Voice command")
+    }
+
+    private var voiceChip: some View {
+        HStack(spacing: 8) {
+            if voice.listening {
+                Circle().fill(Color.brandDot)
+                    .frame(width: 8, height: 8)
+                Text(voice.transcript.isEmpty
+                     ? "Listening… \"mark this\", \"what is this\", "
+                       + "\"find my keys\""
+                     : voice.transcript)
+                    .font(.footnote)
+            } else if let problem = voice.problem {
+                Text(problem).font(.footnote)
+            } else if let voiceNotice {
+                Text(voiceNotice).font(.footnote)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.black.opacity(0.6),
+                    in: Capsule())
+        .foregroundStyle(.white)
+        .task(id: voiceNotice) {
+            guard voiceNotice != nil else { return }
+            try? await Task.sleep(for: .seconds(4))
+            voiceNotice = nil
+            voice.problem = nil
+        }
+    }
+
+    // ---- lens ------------------------------------------------------------
+
+    private func lensCard(_ result: LensResult) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            if let match = result.match,
+               let thumb = Store.loadThumb(match.id) {
+                Image(uiImage: thumb)
+                    .resizable().scaledToFill()
+                    .frame(width: 54, height: 54)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else if let image = result.captured.recognition.image {
+                Image(uiImage: image)
+                    .resizable().scaledToFill()
+                    .frame(width: 54, height: 54)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                if let match = result.match {
+                    Text(match.displayName).font(.headline)
+                    Text(lensDetail(match, spotName: result.spotName))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let lensAI {
+                    Text(lensAI.name).font(.headline)
+                    Text(lensAI.summary
+                         + (lensAI.estimatedValue.map {
+                            " · ~" + currencyShort($0)
+                                + " " + lensAI.valueNote
+                         } ?? ""))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                } else {
+                    Text(lensGuess(result)).font(.headline)
+                    Text("Not something you've saved")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                HStack(spacing: 8) {
+                    if let match = result.match, match.hasPosition,
+                       let matchRoom = match.room {
+                        Button("Find it") {
+                            room = matchRoom
+                            engine.makeActive(matchRoom)
+                            engine.locateTarget = LocateTarget(
+                                thingID: match.id,
+                                name: match.displayName,
+                                x: match.positionX, y: match.positionY)
+                            lensResult = nil
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                    if result.match == nil, lensAI == nil,
+                       ai.isConfigured {
+                        Button {
+                            askLensAI(result)
+                        } label: {
+                            if lensBusy {
+                                ThreadLoadingView(size: 20)
+                            } else {
+                                Text("Ask AI")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(lensBusy)
+                    }
+                    if result.match == nil {
+                        Button("Save it") {
+                            saveFromLens(result)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            Spacer()
+            Button {
+                lensResult = nil
+                lensAI = nil
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(.ultraThinMaterial,
+                    in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func lensDetail(_ match: Thing,
+                            spotName: String?) -> String {
+        var parts: [String] = []
+        if let spotName {
+            parts.append("lives in \(spotName)")
+        } else if let matchRoom = match.room {
+            parts.append("usually in the \(matchRoom.name)")
+        }
+        if let price = match.price {
+            parts.append(currencyShort(price))
+        }
+        if let serial = match.serialNumber {
+            parts.append("SN \(serial)")
+        }
+        if let until = match.warrantyUntil, until > Date() {
+            parts.append("warranty until "
+                + until.formatted(date: .abbreviated, time: .omitted))
+        }
+        return parts.isEmpty ? "Saved in your inventory"
+            : parts.joined(separator: " · ")
+    }
+
+    private func lensGuess(_ result: LensResult) -> String {
+        let label = result.captured.recognition.label
+        return label.isEmpty ? "Hmm — not sure" : "Looks like: \(label)"
+    }
+
+    private func askLensAI(_ result: LensResult) {
+        guard let image = result.captured.recognition.image else {
+            return
+        }
+        lensBusy = true
+        Task {
+            defer { lensBusy = false }
+            lensAI = try? await ai.identify(
+                image: image,
+                hint: result.captured.recognition.text.isEmpty
+                    ? nil
+                    : "Text visible on it: "
+                        + result.captured.recognition.text)
+            if lensAI == nil {
+                voiceNotice = "The AI couldn't answer — check the key "
+                    + "in Settings."
+            }
+        }
+    }
+
+    /// "Actually, remember this" — lens → inventory without re-aiming.
+    private func saveFromLens(_ result: LensResult) {
+        guard let room else { return }
+        let thing = capture.commit(result.captured, room: room,
+                                   context: context)
+        if let lensAI {
+            thing.displayName = lensAI.name
+            thing.userNamed = true
+            thing.category = lensAI.category
+            if let value = lensAI.estimatedValue {
+                thing.price = value
+                thing.priceSource = "ai"
+            }
+            SpotlightIndex.index(thing)
+        }
+        lensResult = nil
+        self.lensAI = nil
+        saveNotice = "Saved \"\(thing.displayName)\""
+    }
+
+    private func currencyShort(_ v: Double) -> String {
+        v.formatted(.currency(
+            code: Locale.current.currency?.identifier ?? "USD")
+            .precision(.fractionLength(0)))
+    }
+
+    // ---- voice -----------------------------------------------------------
+
+    private func handleVoice(_ raw: String) {
+        let text = raw.lowercased()
+        voiceNotice = nil
+        if text.contains("what is this") || text.contains("what's this")
+            || text.contains("whats this") {
+            lensOn = true
+            session.captureNow()
+        } else if text.contains("mark this")
+            || text.contains("save this")
+            || text.contains("remember this")
+            || text.contains("capture") {
+            lensOn = false
+            session.captureNow()
+        } else if let query = findQuery(in: text) {
+            voiceFind(query)
+        } else {
+            voiceNotice = "Try: \"mark this\" · \"what is this\" · "
+                + "\"find my keys\""
+        }
+    }
+
+    private func findQuery(in text: String) -> String? {
+        let prefixes = ["take me to", "where is my", "where are my",
+                        "where is the", "where is", "where are",
+                        "find my", "find the", "find", "locate"]
+        for prefix in prefixes {
+            if let range = text.range(of: prefix) {
+                let q = text[range.upperBound...]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: .punctuationCharacters)
+                if !q.isEmpty { return String(q) }
+            }
+        }
+        return nil
+    }
+
+    private func voiceFind(_ query: String) {
+        let scored = allThings
+            .compactMap { thing -> (Thing, Double)? in
+                SmartSearch.score(query: query, thing: thing)
+                    .map { (thing, $0) }
+            }
+            .sorted { $0.1 > $1.1 }
+        guard let best = scored.first?.0 else {
+            voiceNotice = "Nothing called \"\(query)\" saved yet"
+            return
+        }
+        if best.hasPosition, let bestRoom = best.room {
+            room = bestRoom
+            engine.makeActive(bestRoom)
+            engine.locateTarget = LocateTarget(
+                thingID: best.id, name: best.displayName,
+                x: best.positionX, y: best.positionY)
+            voiceNotice = "Green beacon: \(best.displayName)"
+        } else if let spotID = best.storageID,
+                  let spot = spots.first(where: { $0.id == spotID }) {
+            voiceNotice = "\(best.displayName) is in \(spot.name)"
+        } else {
+            voiceNotice = "\(best.displayName) is saved but has no "
+                + "pin yet"
+        }
     }
 
     private var topBar: some View {
@@ -194,7 +548,8 @@ struct ScanView: View {
                 .font(.subheadline.bold())
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .tint(engine.scanComplete ? .green : .cyan)
+                .tint(engine.scanComplete
+                      ? .green : Color.brandThread)
             }
             if engine.trackingLimited {
                 Text(session.trackingState)
@@ -295,7 +650,7 @@ struct ScanView: View {
         VStack(spacing: 14) {
             Image(systemName: "square.grid.2x2")
                 .font(.system(size: 44))
-                .foregroundStyle(.cyan)
+                .foregroundStyle(Color.brandThread)
             Text("Pick a room first")
                 .font(.title3.bold())
             Text("Every scan belongs to a room so its map and "
@@ -356,7 +711,7 @@ struct ScanView: View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: icon)
                 .font(.title2)
-                .foregroundStyle(.cyan)
+                .foregroundStyle(Color.brandThread)
                 .frame(width: 34)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
@@ -414,6 +769,45 @@ struct ScanView: View {
                 room.hasWorldMap = true
             }
         }
+    }
+}
+
+// ---- lens lookup ---------------------------------------------------------
+
+/// What the lens saw: the capture, plus the saved thing it matched (by
+/// visual fingerprint, anywhere in the home) and where that thing
+/// lives. No match + no AI = "looks like: <classifier guess>".
+struct LensResult {
+    let captured: CapturedObject
+    let match: Thing?
+    let spotName: String?
+
+    static func lookup(_ captured: CapturedObject, things: [Thing],
+                       spots: [StorageSpot]) -> LensResult {
+        var best: Thing?
+        var bestDistance = Float.greatestFiniteMagnitude
+        if let print = captured.recognition.featurePrint {
+            for thing in things {
+                guard let fp = thing.featurePrint,
+                      let d = VisionPipeline.distance(fp, print) else {
+                    continue
+                }
+                if d < bestDistance {
+                    bestDistance = d
+                    best = thing
+                }
+            }
+        }
+        // between the merge threshold (0.6, same object re-look) and
+        // the name-borrow threshold (0.75): "recognize" needs more
+        // confidence than borrowing a name, less than merging pins
+        let match = bestDistance < 0.68 ? best : nil
+        var spotName: String?
+        if let id = match?.storageID {
+            spotName = spots.first { $0.id == id }?.name
+        }
+        return LensResult(captured: captured, match: match,
+                          spotName: spotName)
     }
 }
 
