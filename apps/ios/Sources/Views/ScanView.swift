@@ -386,12 +386,11 @@ struct ScanView: View {
                                                lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .frame(width: 62, height: 62)
-                if capture.busy {
-                    ThreadLoadingView(size: 30)
-                } else {
-                    Circle().fill(.white)
-                        .frame(width: 48, height: 48)
-                }
+                // no loading state on capture (field test 7): the
+                // save happens in the background and the card slides
+                // up when it's ready — the button just stays a button
+                Circle().fill(.white)
+                    .frame(width: 48, height: 48)
             }
         }
         .disabled(capture.busy || !session.floorFound)

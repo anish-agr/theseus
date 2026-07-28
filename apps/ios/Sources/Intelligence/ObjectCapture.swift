@@ -270,11 +270,14 @@ final class ObjectCapture: ObservableObject {
                 existing.sizeHeightM = captured.physicalHeightM
                 existing.sizeConfidence = captured.sizeConfidence
             }
-            if !existing.userNamed,
+            if !existing.userNamed, existing.aiSummary == nil,
                captured.recognition.confidence > existing.autoConfidence {
                 existing.autoLabel = captured.recognition.label
                 existing.autoConfidence = captured.recognition.confidence
-                existing.displayName = name
+                // never downgrade a real name to the placeholder
+                if name != "Unnamed object" {
+                    existing.displayName = name
+                }
             }
             let sighting = Sighting(positionX: captured.worldX,
                                     positionY: captured.worldY,
@@ -343,7 +346,9 @@ final class ObjectCapture: ObservableObject {
         for thing in room.things {
             let apart = hypot(thing.positionX - captured.worldX,
                               thing.positionY - captured.worldY)
-            guard apart < 0.7 else { continue }
+            // tightened from 0.7 m — field test 7: two different
+            // objects on the same shelf were merging into one
+            guard apart < 0.5 else { continue }
             guard let a = thing.featurePrint,
                   let b = captured.recognition.featurePrint,
                   let d = VisionPipeline.distance(a, b) else {
@@ -351,7 +356,7 @@ final class ObjectCapture: ObservableObject {
                 // matching label, which is how the engine's registry
                 // has always merged
                 if thing.autoLabel == captured.recognition.label,
-                   apart < 0.4 {
+                   apart < 0.3 {
                     return thing
                 }
                 continue
@@ -361,9 +366,10 @@ final class ObjectCapture: ObservableObject {
                 best = thing
             }
         }
-        // Vision feature-print distances: < ~0.6 is "same object" in
-        // practice for a re-look from a similar angle
-        return bestDistance < 0.6 ? best : nil
+        // Vision feature-print distances, tightened from 0.6: a merge
+        // must be CLEARLY the same object — a wrong merge destroys a
+        // record, a missed merge just makes a duplicate you can spot
+        return bestDistance < 0.5 ? best : nil
     }
 
     /// Nearest-neighbour over the user's own named things: the personal
