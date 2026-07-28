@@ -46,7 +46,9 @@ struct ScanView: View {
         .onAppear {
             session.engine = engine
             session.capture = capture
+            syncRoom()
         }
+        .onChange(of: room?.id) { _, _ in syncRoom() }
         // onReceive rather than onChange: CapturedObject carries a
         // UIImage and is deliberately not Equatable
         .onReceive(session.$pendingCapture) { new in
@@ -209,6 +211,17 @@ struct ScanView: View {
                 card = nil
             }
         }
+    }
+
+    /// Point engine + AR session at the selected room. No-ops when the
+    /// room is already active, so tab switches never reset tracking.
+    private func syncRoom() {
+        guard let room else { return }
+        engine.makeActive(room)
+        session.activateRoom(
+            id: room.id,
+            worldMap: room.hasWorldMap
+                ? Store.loadWorldMap(room.id) : nil)
     }
 
     /// Persist grid + world map when leaving the scanner.

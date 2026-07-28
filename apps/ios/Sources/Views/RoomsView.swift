@@ -100,7 +100,7 @@ struct RoomsView: View {
         room.place = places.first
         context.insert(room)
         newRoomName = ""
-        engine.resetForNewRoom()
+        engine.resetForNewRoom(id: room.id)
         activeRoom = room
         selectedTab = 1
     }
@@ -149,33 +149,58 @@ struct RoomRow: View {
     }
 }
 
-/// Tiny cached render of the saved grid, for the room list.
+/// Cached render of the saved grid for lists — the decode happens once
+/// per scan date off the main thread, not on every Canvas draw.
 struct FloorPlanThumbnail: View {
     let room: Room
+    @State private var cells: [UInt8] = []
+    @State private var gridW = 0
+    @State private var gridH = 0
 
     var body: some View {
         Canvas { ctx, size in
-            guard let grid = Store.loadGrid(room.id) else {
+            guard gridW > 0, cells.count == gridW * gridH else {
                 ctx.fill(Path(CGRect(origin: .zero, size: size)),
                          with: .color(.gray.opacity(0.2)))
                 return
             }
-            let sx = size.width / CGFloat(grid.width)
-            let sy = size.height / CGFloat(grid.height)
-            for y in stride(from: 0, to: grid.height, by: 2) {
-                for x in stride(from: 0, to: grid.width, by: 2) {
-                    let s = grid.state(Cell(Int32(x), Int32(y)))
-                    guard s != UNKNOWN else { continue }
+            let sx = size.width / CGFloat(gridW)
+            let sy = size.height / CGFloat(gridH)
+            for y in stride(from: 0, to: gridH, by: 2) {
+                for x in stride(from: 0, to: gridW, by: 2) {
+                    let s = cells[y * gridW + x]
+                    guard s != 0 else { continue }
                     let rect = CGRect(x: CGFloat(x) * sx,
                                       y: size.height - CGFloat(y + 1) * sy,
                                       width: sx * 2, height: sy * 2)
                     ctx.fill(Path(rect), with: .color(
-                        s == FREE ? Color(red: 0.10, green: 0.28, blue: 0.28)
-                                  : Color(red: 0.85, green: 0.65, blue: 0.25)))
+                        s == 1 ? Color(red: 0.10, green: 0.28, blue: 0.28)
+                               : Color(red: 0.85, green: 0.65, blue: 0.25)))
                 }
             }
         }
         .background(Color.black.opacity(0.6))
+        .task(id: room.lastScannedAt) {
+            let roomID = room.id
+            let loaded: ([UInt8], Int, Int)? = await Task.detached {
+                guard let grid = Store.loadGrid(roomID) else { return nil }
+                var snap = [UInt8](repeating: 0,
+                                   count: grid.width * grid.height)
+                for i in 0..<grid.lo.count {
+                    if grid.lo[i] >= LO_OCC {
+                        snap[i] = 2
+                    } else if grid.lo[i] <= LO_FREE {
+                        snap[i] = 1
+                    }
+                }
+                return (snap, grid.width, grid.height)
+            }.value
+            if let (snap, w, h) = loaded {
+                cells = snap
+                gridW = w
+                gridH = h
+            }
+        }
     }
 }
 
@@ -186,6 +211,7 @@ struct RoomDetailView: View {
     @Binding var activeRoom: Room?
     @Binding var selectedTab: Int
     @State private var showFit = false
+    @State private var showMeasure = false
 
     var body: some View {
         List {
@@ -210,10 +236,7 @@ struct RoomDetailView: View {
             Section {
                 Button {
                     activeRoom = room
-                    engine.resetForNewRoom()
-                    if let grid = Store.loadGrid(room.id) {
-                        engine.adopt(grid: grid)
-                    }
+                    engine.makeActive(room)
                     selectedTab = 1
                 } label: {
                     Label("Continue scanning", systemImage: "camera.viewfinder")
@@ -222,11 +245,6 @@ struct RoomDetailView: View {
                     ChangesView(room: room)
                 } label: {
                     Label("What changed", systemImage: "clock.arrow.circlepath")
-                }
-                Button {
-                    showFit = true
-                } label: {
-                    Label("Will it fit?", systemImage: "arrow.left.and.right")
                 }
             }
             Section("Things here") {
@@ -243,8 +261,31 @@ struct RoomDetailView: View {
             }
         }
         .navigationTitle(room.name)
+        .toolbar {
+            // occasional-use tools live behind a menu, not the main list
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        showMeasure = true
+                    } label: {
+                        Label("Measure", systemImage: "ruler")
+                    }
+                    Button {
+                        showFit = true
+                    } label: {
+                        Label("Will it fit?",
+                              systemImage: "arrow.left.and.right")
+                    }
+                } label: {
+                    Label("Tools", systemImage: "wrench.and.screwdriver")
+                }
+            }
+        }
         .sheet(isPresented: $showFit) {
             FitThroughView(room: room)
+        }
+        .sheet(isPresented: $showMeasure) {
+            MeasureView(room: room)
         }
     }
 }

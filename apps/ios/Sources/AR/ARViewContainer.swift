@@ -41,8 +41,11 @@ struct ARViewContainer: UIViewRepresentable {
                      pins: [(id: UUID, x: Double, y: Double,
                              height: Double)],
                      floorY: Float) {
+            // include floorY: entities placed before the floor was
+            // found would otherwise float at the wrong height forever
             let key = "\(path.count)|\(path.last?.x ?? 0)|"
-                + "\(goal?.x ?? 0),\(goal?.y ?? 0)|\(pins.count)"
+                + "\(goal?.x ?? 0),\(goal?.y ?? 0)|\(pins.count)|"
+                + "\(floorY)"
             guard key != lastKey else { return }
             lastKey = key
             overlay.children.removeAll()

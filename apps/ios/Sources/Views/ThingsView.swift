@@ -76,16 +76,17 @@ struct ThingsView: View {
             }
         }
         guard !query.isEmpty else { return base }
-        let q = query.lowercased()
+        // forgiving search: "where are my keys", "sofa" -> couch, typos
         return base
-            .filter { $0.searchHaystack.contains(q) }
-            .sorted { a, b in
-                // exact-ish name matches rank above text-on-object hits
-                let aName = a.displayName.lowercased().contains(q)
-                let bName = b.displayName.lowercased().contains(q)
-                if aName != bName { return aName }
-                return a.lastSeenAt > b.lastSeenAt
+            .compactMap { thing -> (Thing, Double)? in
+                SmartSearch.score(query: query, thing: thing)
+                    .map { (thing, $0) }
             }
+            .sorted { a, b in
+                if a.1 != b.1 { return a.1 > b.1 }
+                return a.0.lastSeenAt > b.0.lastSeenAt
+            }
+            .map(\.0)
     }
 
     private func delete(at offsets: IndexSet) {
@@ -204,7 +205,11 @@ struct ThingDetailView: View {
             Section {
                 Button {
                     guard let room = thing.room else { return }
+                    // make that room's map active BEFORE routing —
+                    // otherwise guidance runs on whichever grid was
+                    // loaded last (or an empty one)
                     activeRoom = room
+                    engine.makeActive(room)
                     engine.startGuidance(
                         to: Vec(thing.positionX, thing.positionY),
                         name: thing.displayName)

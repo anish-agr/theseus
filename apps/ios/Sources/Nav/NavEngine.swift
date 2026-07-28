@@ -34,6 +34,9 @@ final class NavEngine: ObservableObject {
     @Published var statusLine = ""
     @Published var recording = false
     @Published var gridRevision = 0     // bumped so the minimap redraws
+    /// Which Room the grid belongs to — guards against scanning one
+    /// room into another room's map after a switch.
+    @Published var currentRoomID: UUID?
 
     private var dstar: DStarLite?
     private var follower: GuidanceFollower?
@@ -59,21 +62,35 @@ final class NavEngine: ObservableObject {
 
     // ---- room lifecycle --------------------------------------------------
 
-    func resetForNewRoom() {
+    func resetForNewRoom(id: UUID? = nil) {
         grid = NavEngine.makeGrid()
         clearGuidance()
         coverage = 0
         floorAreaM2 = 0
+        currentRoomID = id
         gridRevision += 1
     }
 
-    func adopt(grid loaded: OccupancyGrid) {
+    func adopt(grid loaded: OccupancyGrid, roomID: UUID) {
         grid = loaded
         grid.clearanceCap = 1.2
         grid.autoClearance = false
         grid.refreshClearance(force: true)
+        currentRoomID = roomID
         recomputeCoverage()
         gridRevision += 1
+    }
+
+    /// Make `room` the active map: load its saved grid (or start empty)
+    /// unless it already is active. Callers that also run AR must
+    /// separately activate the room's world map on the session.
+    func makeActive(_ room: Room) {
+        guard currentRoomID != room.id else { return }
+        if let saved = Store.loadGrid(room.id) {
+            adopt(grid: saved, roomID: room.id)
+        } else {
+            resetForNewRoom(id: room.id)
+        }
     }
 
     // ---- observations ----------------------------------------------------

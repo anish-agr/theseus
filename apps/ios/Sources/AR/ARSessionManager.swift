@@ -44,11 +44,27 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
         config.planeDetection = [.horizontal, .vertical]
         config.worldAlignment = .gravity
         config.environmentTexturing = .none
+        // LiDAR phones (12 Pro+) get dense mesh reconstruction — the
+        // map fills in near-instantly and far more accurately. The XR
+        // path below (planes + feature points) remains the baseline.
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            config.sceneReconstruction = .mesh
+        }
         if let worldMap {
             config.initialWorldMap = worldMap
             relocalizing = true
         }
         return config
+    }
+
+    private(set) var activeRoomID: UUID?
+
+    /// Switch the AR session to a room. No-op when it's already active,
+    /// so tab hopping never resets tracking mid-scan.
+    func activateRoom(id: UUID, worldMap: ARWorldMap?) {
+        guard activeRoomID != id else { return }
+        activeRoomID = id
+        restart(worldMap: worldMap)
     }
 
     func restart(worldMap: ARWorldMap?) {
@@ -183,6 +199,10 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
         guard let engine else { return }
         var obs: [(Cell, Bool)] = []
         for anchor in anchors {
+            if let mesh = anchor as? ARMeshAnchor {
+                obs += ingestMesh(mesh, grid: engine.grid)
+                continue
+            }
             guard let plane = anchor as? ARPlaneAnchor else { continue }
             let world = anchor.transform
             if plane.alignment == .horizontal {
@@ -231,6 +251,35 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
                 v += step
             }
             u += step
+        }
+        return out
+    }
+
+    /// LiDAR mesh vertices, height-banded like feature points but
+    /// trusted immediately — dense depth doesn't need the persistence
+    /// filter that sparse, noisy points do. Sampled to bound cost.
+    private func ingestMesh(_ mesh: ARMeshAnchor,
+                            grid: OccupancyGrid) -> [(Cell, Bool)] {
+        guard floorFound else { return [] }
+        var out: [(Cell, Bool)] = []
+        let verts = mesh.geometry.vertices
+        let transform = mesh.transform
+        let count = verts.count
+        guard count > 0 else { return out }
+        let step = max(1, count / 300)
+        let base = verts.buffer.contents().advanced(by: verts.offset)
+        for i in stride(from: 0, to: count, by: step) {
+            let p = base.advanced(by: i * verts.stride)
+                .assumingMemoryBound(to: SIMD3<Float>.self).pointee
+            let w = transform * SIMD4<Float>(p.x, p.y, p.z, 1)
+            let h = w.y - floorY
+            let c = grid.worldToCell(Vec(Double(w.x), Double(-w.z)))
+            guard grid.inBounds(c) else { continue }
+            if h > 0.15 && h < 1.9 {
+                out.append((c, true))
+            } else if h > -0.08 && h < 0.08 {
+                out.append((c, false))
+            }
         }
         return out
     }

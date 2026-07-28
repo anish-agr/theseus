@@ -83,12 +83,24 @@ struct ChangesView: View {
             error = "That snapshot could not be read"
             return
         }
-        guard old.width == engine.grid.width,
-              old.height == engine.grid.height else {
+        // compare against THIS room's current map — the engine's live
+        // grid may belong to a different room right now
+        let current: OccupancyGrid?
+        if engine.currentRoomID == room.id {
+            current = engine.grid
+        } else {
+            current = Store.loadGrid(room.id)
+        }
+        guard let current else {
+            error = "No current scan for this room yet"
+            return
+        }
+        guard old.width == current.width,
+              old.height == current.height else {
             error = "That scan used a different map size"
             return
         }
         error = nil
-        report = diffReport(old, engine.grid)
+        report = diffReport(old, current)
     }
 }
