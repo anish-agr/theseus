@@ -29,6 +29,10 @@ function Get-PEArch($path) {
     switch ($machine) { 0x014c { 'x86' } 0x8664 { 'x64' } default { 'unknown' } }
 }
 
+# Absolute, so the suggestion works from whatever directory you ran
+# this from - a relative path only resolves inside the repo.
+$fixScript = Join-Path (Split-Path $PSScriptRoot -Parent) 'sideloadly\fix-anisette.ps1'
+
 # ---- 0. is there anything to test at all -------------------------------
 if (-not (Test-Path "$root\sideloadly.exe")) {
     Write-Host "Sideloadly is not installed at $root" -ForegroundColor Red
@@ -44,7 +48,7 @@ if (-not $dllArch) {
         -ForegroundColor Red -NoNewline
     Write-Host "($n DLLs, no iTunesCore.dll)." -ForegroundColor Red
     Write-Host "Sideloadly's own download did not finish. Run:"
-    Write-Host "  powershell -File tools/sideloadly/fix-anisette.ps1"
+    Write-Host "  powershell -File `"$fixScript`""
     exit 1
 }
 
@@ -54,7 +58,7 @@ if ($exeArch -ne $dllArch) {
     Write-Host "`nSideloadly is $exeArch but its anisette DLLs are $dllArch." `
         -ForegroundColor Red
     Write-Host "They can never load. Delete $an and run:"
-    Write-Host "  powershell -File tools/sideloadly/fix-anisette.ps1"
+    Write-Host "  powershell -File `"$fixScript`""
     exit 1
 }
 
