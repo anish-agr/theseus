@@ -13,6 +13,29 @@ struct ToolsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("Your home's memory") {
+                    navRow("Storage", icon: "shippingbox",
+                           subtitle: "Boxes, closets, drawers — what "
+                           + "lives inside what") {
+                        StorageView()
+                    }
+                    navRow("Insurance", icon: "checkmark.shield",
+                           subtitle: "Values, serials, warranties, "
+                           + "and the claim-ready PDF") {
+                        InsuranceView()
+                    }
+                    navRow("Deposit proof",
+                           icon: "camera.on.rectangle",
+                           subtitle: "Sealed move-in/move-out "
+                           + "condition records") {
+                        ConditionView()
+                    }
+                    navRow("Memory lane", icon: "clock",
+                           subtitle: "Everything saved, scanned and "
+                           + "sealed — by month") {
+                        MemoryLaneView()
+                    }
+                }
                 Section("Space") {
                     toolRow(.measure, icon: "ruler",
                             subtitle: "Straight-line and walking "
@@ -41,7 +64,7 @@ struct ToolsView: View {
                             Text("Settings & data")
                         } icon: {
                             Image(systemName: "gearshape")
-                                .foregroundStyle(.cyan)
+                                .foregroundStyle(Color.brandThread)
                         }
                     }
                 }
@@ -56,6 +79,28 @@ struct ToolsView: View {
         }
     }
 
+    private func navRow<Destination: View>(
+        _ title: String, icon: String, subtitle: String,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(Color.brandThread)
+                    .frame(width: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     private func toolRow(_ tool: QuickTool, icon: String,
                          subtitle: String) -> some View {
         Button {
@@ -64,7 +109,7 @@ struct ToolsView: View {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .font(.title3)
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(Color.brandThread)
                     .frame(width: 30)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(tool.title)

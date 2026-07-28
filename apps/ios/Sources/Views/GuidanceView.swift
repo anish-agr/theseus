@@ -91,8 +91,8 @@ struct GuidanceView: View {
     private var tint: Color {
         switch engine.cue?.kind {
         case .offRoute: return .red
-        case .arrive: return .green
-        default: return .cyan
+        case .arrive: return .brandDot
+        default: return .brandThread
         }
     }
 
@@ -101,7 +101,8 @@ struct GuidanceView: View {
         case .straight: return "arrow.up"
         case .turnLeft: return "arrow.turn.up.left"
         case .turnRight: return "arrow.turn.up.right"
-        case .arrive: return "checkmark.circle.fill"
+        // the destination is a dot, never a checkmark (brand rule)
+        case .arrive: return "circle.fill"
         case .offRoute: return "exclamationmark.triangle.fill"
         case nil: return "hourglass"
         }
@@ -146,7 +147,8 @@ struct GuidanceView: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary)
                     Capsule()
-                        .fill(width < 0.75 ? Color.orange : Color.cyan)
+                        .fill(width < 0.75
+                              ? Color.orange : Color.brandThread)
                         .frame(width: geo.size.width * fraction)
                 }
             }

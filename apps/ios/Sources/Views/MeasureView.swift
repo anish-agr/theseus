@@ -141,7 +141,7 @@ struct MeasureView: View {
                 }
             }
             if let a = pointA {
-                marker(ctx: ctx, at: toPx(a), color: .cyan)
+                marker(ctx: ctx, at: toPx(a), color: .brandThread)
             }
             if let b = pointB {
                 marker(ctx: ctx, at: toPx(b), color: .green)

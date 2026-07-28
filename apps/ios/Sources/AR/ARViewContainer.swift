@@ -54,7 +54,11 @@ struct ARViewContainer: UIViewRepresentable {
 
             if path.count >= 2 {
                 let mesh = MeshResource.generateSphere(radius: 0.035)
-                let mat = SimpleMaterial(color: .cyan, isMetallic: false)
+                // route dots wear the brand thread blue (#33A8FF)
+                let mat = SimpleMaterial(
+                    color: UIColor(red: 0.2, green: 0.66, blue: 1,
+                                   alpha: 1),
+                    isMetallic: false)
                 let total = polylineLength(path)
                 var s = 0.0
                 while s < total {

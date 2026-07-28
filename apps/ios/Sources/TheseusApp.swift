@@ -13,14 +13,16 @@ struct TheseusApp: App {
         do {
             container = try ModelContainer(
                 for: Place.self, Room.self, Thing.self, Sighting.self,
-                Doorway.self, ScanSession.self)
+                Doorway.self, ScanSession.self, StorageSpot.self,
+                ConditionRecord.self, ConditionShot.self)
         } catch {
             // A store we cannot open is unrecoverable; an in-memory
             // fallback at least lets the user reach Settings -> reset
             // instead of facing a launch loop.
             container = try! ModelContainer(
                 for: Place.self, Room.self, Thing.self, Sighting.self,
-                Doorway.self, ScanSession.self,
+                Doorway.self, ScanSession.self, StorageSpot.self,
+                ConditionRecord.self, ConditionShot.self,
                 configurations: ModelConfiguration(
                     isStoredInMemoryOnly: true))
         }
@@ -31,6 +33,7 @@ struct TheseusApp: App {
             RootView()
                 .environmentObject(engine)
                 .preferredColorScheme(.dark)
+                .tint(.brandThread)
         }
         .modelContainer(container)
     }

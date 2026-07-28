@@ -69,7 +69,7 @@ struct RoomsView: View {
         VStack(spacing: 18) {
             Image(systemName: "camera.viewfinder")
                 .font(.system(size: 64))
-                .foregroundStyle(.cyan)
+                .foregroundStyle(Color.brandThread)
             Text("Map your first room")
                 .font(.title2.bold())
             Text("Sweep your phone around the space. Then point at "

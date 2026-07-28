@@ -1,56 +1,65 @@
-# Generates the app icon: a square labyrinth with one opening and the
-# goal at its centre. Drawn in code so the 1024 px master is
-# reproducible and the repo carries no binary source-of-truth.
+# Generates the app icon: the Theseus thread — one continuous line that
+# ends in a glowing warm destination dot, on deep indigo. Matches the
+# brand spec (docs/BRAND.md) and Sources/Brand/Brand.swift exactly:
+# thread #33A8FF, dot #FFF6E8, background #0E1B4D.
 #
 #   powershell -File tools/icon/generate.ps1
 Add-Type -AssemblyName System.Drawing
 
-$W = 1024
+$W = 1024.0
 $out = Join-Path $PSScriptRoot "..\..\apps\ios\Sources\Assets.xcassets\AppIcon.appiconset\icon-1024.png"
 $out = [IO.Path]::GetFullPath($out)
 New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
 
-$bmp = New-Object Drawing.Bitmap($W, $W)
+$bmp = New-Object Drawing.Bitmap([int]$W, [int]$W)
 $g = [Drawing.Graphics]::FromImage($bmp)
 $g.SmoothingMode = 'AntiAlias'
 
-# background: deep navy, lit slightly from the top-left
-$rect = New-Object Drawing.Rectangle(0, 0, $W, $W)
+# background: deep indigo, slightly darker toward the bottom
+$rect = New-Object Drawing.Rectangle(0, 0, [int]$W, [int]$W)
 $bg = New-Object Drawing.Drawing2D.LinearGradientBrush(
     $rect,
-    [Drawing.Color]::FromArgb(255, 18, 30, 51),
-    [Drawing.Color]::FromArgb(255, 8, 13, 24),
-    45.0)
+    [Drawing.Color]::FromArgb(255, 16, 30, 84),
+    [Drawing.Color]::FromArgb(255, 8, 16, 48),
+    90.0)
 $g.FillRectangle($bg, $rect)
 
-# the labyrinth: a square spiral wound inward, entrance at top-left
-$inset = 168.0
-$gap = 104.0
-$x1 = $inset; $y1 = $inset
-$x2 = $W - $inset; $y2 = $W - $inset
-$pts = New-Object 'System.Collections.Generic.List[Drawing.PointF]'
-$pts.Add((New-Object Drawing.PointF($x1, $y1)))
-while (($x2 - $x1) -gt $gap -and ($y2 - $y1) -gt $gap) {
-    $pts.Add((New-Object Drawing.PointF($x2, $y1)))
-    $pts.Add((New-Object Drawing.PointF($x2, $y2)))
-    $pts.Add((New-Object Drawing.PointF($x1, $y2)))
-    $y1 += $gap
-    $pts.Add((New-Object Drawing.PointF($x1, $y1)))
-    $x1 += $gap
-    $x2 -= $gap
-    $y2 -= $gap
+# the thread: three horizontal runs joined by two U-turns, same
+# parametric path as ThreadShape in Brand.swift (unit coords * W)
+function P([double]$x, [double]$y) {
+    New-Object Drawing.PointF([single]($x * $W), [single]($y * $W))
 }
+$k = 0.173   # Bezier control offset that reads as a semicircle r=0.13
+$path = New-Object Drawing.Drawing2D.GraphicsPath
+$path.AddLine((P 0.24 0.20), (P 0.58 0.20))
+$path.AddBezier((P 0.58 0.20), (P ($k + 0.58) 0.20),
+                (P ($k + 0.58) 0.46), (P 0.58 0.46))
+$path.AddLine((P 0.58 0.46), (P 0.38 0.46))
+$path.AddBezier((P 0.38 0.46), (P (0.38 - $k) 0.46),
+                (P (0.38 - $k) 0.72), (P 0.38 0.72))
+$path.AddLine((P 0.38 0.72), (P 0.72 0.72))
 
-$pen = New-Object Drawing.Pen([Drawing.Color]::FromArgb(255, 34, 211, 238), 46.0)
+$pen = New-Object Drawing.Pen([Drawing.Color]::FromArgb(255, 51, 168, 255), [single](0.085 * $W))
 $pen.LineJoin = 'Round'
 $pen.StartCap = 'Round'
 $pen.EndCap = 'Round'
-$g.DrawLines($pen, $pts.ToArray())
+$g.DrawPath($pen, $path)
 
-# the goal at the centre - the thing you are being walked to
-$dot = New-Object Drawing.SolidBrush([Drawing.Color]::FromArgb(255, 245, 158, 11))
-$r = 62.0
-$g.FillEllipse($dot, ($W / 2 - $r), ($W / 2 - $r), (2 * $r), (2 * $r))
+# the destination dot, with a soft warm halo (the only thing that glows)
+$cx = 0.82 * $W; $cy = 0.72 * $W
+$haloR = 0.16 * $W
+$haloPath = New-Object Drawing.Drawing2D.GraphicsPath
+$haloPath.AddEllipse([single]($cx - $haloR), [single]($cy - $haloR),
+                     [single](2 * $haloR), [single](2 * $haloR))
+$halo = New-Object Drawing.Drawing2D.PathGradientBrush($haloPath)
+$halo.CenterColor = [Drawing.Color]::FromArgb(140, 255, 246, 232)
+$halo.SurroundColors = @([Drawing.Color]::FromArgb(0, 255, 246, 232))
+$g.FillPath($halo, $haloPath)
+
+$dot = New-Object Drawing.SolidBrush([Drawing.Color]::FromArgb(255, 255, 246, 232))
+$r = 0.065 * $W
+$g.FillEllipse($dot, [single]($cx - $r), [single]($cy - $r),
+               [single](2 * $r), [single](2 * $r))
 
 $bmp.Save($out, [Drawing.Imaging.ImageFormat]::Png)
 $g.Dispose(); $bmp.Dispose()

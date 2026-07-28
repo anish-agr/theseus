@@ -95,7 +95,7 @@ struct MinimapView: View {
             for p in engine.smoothedPath.dropFirst() {
                 path.addLine(to: toPx(p))
             }
-            ctx.stroke(path, with: .color(.cyan), lineWidth: 2)
+            ctx.stroke(path, with: .color(.brandThread), lineWidth: 2)
         }
         if let goal = engine.goal {
             let p = toPx(goal)
