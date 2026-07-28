@@ -10,7 +10,8 @@ import SwiftUI
 struct ARViewContainer: UIViewRepresentable {
     @EnvironmentObject var engine: NavEngine
     let sessionManager: ARSessionManager
-    var thingPins: [(id: UUID, x: Double, y: Double, height: Double)] = []
+    var thingPins: [(id: UUID, x: Double, y: Double, height: Double,
+                     highlighted: Bool)] = []
 
     func makeUIView(context: Context) -> ARView {
         let view = ARView(frame: .zero)
@@ -39,13 +40,14 @@ struct ARViewContainer: UIViewRepresentable {
 
         func rebuild(overlay: AnchorEntity, path: [Vec], goal: Vec?,
                      pins: [(id: UUID, x: Double, y: Double,
-                             height: Double)],
+                             height: Double, highlighted: Bool)],
                      floorY: Float) {
             // include floorY: entities placed before the floor was
             // found would otherwise float at the wrong height forever
+            let litID = pins.first(where: \.highlighted)?.id
             let key = "\(path.count)|\(path.last?.x ?? 0)|"
                 + "\(goal?.x ?? 0),\(goal?.y ?? 0)|\(pins.count)|"
-                + "\(floorY)"
+                + "\(floorY)|\(litID?.uuidString ?? "-")"
             guard key != lastKey else { return }
             lastKey = key
             overlay.children.removeAll()
@@ -76,16 +78,41 @@ struct ARViewContainer: UIViewRepresentable {
                                             Float(-goal.y))
                 overlay.addChild(pin)
             }
-            // remembered objects, floating where they were logged
+            // remembered objects, floating where they were logged; a
+            // located thing gets a tall green beacon you can spot
+            // across the room, everything else a small amber dot
             let pinMesh = MeshResource.generateSphere(radius: 0.045)
             let pinMat = SimpleMaterial(color: .systemYellow,
                                         isMetallic: false)
             for pin in pins.prefix(120) {
-                let e = ModelEntity(mesh: pinMesh, materials: [pinMat])
-                e.position = SIMD3<Float>(
-                    Float(pin.x), floorY + Float(max(0.05, pin.height)),
-                    Float(-pin.y))
-                overlay.addChild(e)
+                if pin.highlighted {
+                    let beacon = ModelEntity(
+                        mesh: MeshResource.generateBox(
+                            width: 0.05, height: 1.2, depth: 0.05,
+                            cornerRadius: 0.02),
+                        materials: [SimpleMaterial(
+                            color: .systemGreen, isMetallic: false)])
+                    beacon.position = SIMD3<Float>(
+                        Float(pin.x), floorY + 0.6, Float(-pin.y))
+                    overlay.addChild(beacon)
+                    let orb = ModelEntity(
+                        mesh: MeshResource.generateSphere(radius: 0.09),
+                        materials: [SimpleMaterial(
+                            color: .systemGreen, isMetallic: false)])
+                    orb.position = SIMD3<Float>(
+                        Float(pin.x),
+                        floorY + Float(max(0.15, pin.height)),
+                        Float(-pin.y))
+                    overlay.addChild(orb)
+                } else {
+                    let e = ModelEntity(mesh: pinMesh,
+                                        materials: [pinMat])
+                    e.position = SIMD3<Float>(
+                        Float(pin.x),
+                        floorY + Float(max(0.05, pin.height)),
+                        Float(-pin.y))
+                    overlay.addChild(e)
+                }
             }
         }
     }

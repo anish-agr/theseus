@@ -9,6 +9,12 @@ import SwiftUI
 
 struct MinimapView: View {
     @EnvironmentObject var engine: NavEngine
+    /// Tap-anywhere routing confused the first field test ("Planning…"
+    /// out of nowhere), so it is opt-in; the scan screen shows the map
+    /// as pure feedback and routing starts from Stuff instead.
+    var interactive: Bool = false
+    /// Remembered things drawn as dots; the located one is highlighted.
+    var pins: [(x: Double, y: Double, highlighted: Bool)] = []
     @State private var snapshot: [UInt8] = []
     @State private var snapshotWidth = 0
     @State private var snapshotHeight = 0
@@ -22,12 +28,14 @@ struct MinimapView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .contentShape(Rectangle())
             .onTapGesture { tap in
-                routeTo(tap, in: geo.size)
+                if interactive { routeTo(tap, in: geo.size) }
             }
         }
         .onAppear(perform: refresh)
         .onChange(of: engine.gridRevision) { _, _ in refresh() }
-        .accessibilityLabel("Floor plan. Double tap to route to a point.")
+        .accessibilityLabel(interactive
+            ? "Floor plan. Double tap to route to a point."
+            : "Floor plan of the scan so far.")
     }
 
     private func refresh() {
@@ -94,6 +102,23 @@ struct MinimapView: View {
             ctx.fill(Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4,
                                             width: 8, height: 8)),
                      with: .color(.green))
+        }
+
+        for pin in pins {
+            let p = toPx(Vec(pin.x, pin.y))
+            if pin.highlighted {
+                ctx.stroke(
+                    Path(ellipseIn: CGRect(x: p.x - 7, y: p.y - 7,
+                                           width: 14, height: 14)),
+                    with: .color(.green), lineWidth: 2)
+                ctx.fill(Path(ellipseIn: CGRect(x: p.x - 3.5, y: p.y - 3.5,
+                                                width: 7, height: 7)),
+                         with: .color(.green))
+            } else {
+                ctx.fill(Path(ellipseIn: CGRect(x: p.x - 2.5, y: p.y - 2.5,
+                                                width: 5, height: 5)),
+                         with: .color(.yellow.opacity(0.85)))
+            }
         }
 
         // you: a triangle pointing along your heading

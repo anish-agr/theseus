@@ -1,5 +1,7 @@
-// The camera IS the app. Sweep to map; hold the reticle on anything
-// for ~1.2 s to remember it. No buttons in the common path.
+// The camera IS the scanner. Sweep to map; hold the reticle on anything
+// (or tap the shutter) to remember it. First launch teaches the moves;
+// a Finish flow answers "what now?" — both were missing from the first
+// field test and the app read as a dead end.
 import ARKit
 import NavCore
 import SwiftData
@@ -10,6 +12,8 @@ struct ScanView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.scenePhase) private var scenePhase
     @Binding var room: Room?
+    @Binding var selectedTab: Int
+    @AppStorage("scanCoachSeen") private var coachSeen = false
     @StateObject private var session = ARSessionManager()
     @StateObject private var capture = ObjectCapture()
     @State private var card: CapturedObject?
@@ -17,6 +21,8 @@ struct ScanView: View {
     @State private var renaming = false
     @State private var draftName = ""
     @State private var saveNotice: String?
+    @State private var showCoach = false
+    @State private var showSummary = false
 
     var body: some View {
         ZStack {
@@ -34,16 +40,29 @@ struct ScanView: View {
                         .transition(.move(edge: .bottom).combined(
                             with: .opacity))
                 }
+                if engine.locateTarget != nil {
+                    LocateBar()
+                        .padding(.horizontal)
+                        .padding(.bottom, 4)
+                }
                 HStack(alignment: .bottom) {
                     hintBubble
                     Spacer()
-                    MinimapView()
-                        .frame(width: 150, height: 150)
+                    VStack(spacing: 10) {
+                        shutterButton
+                        MinimapView(pins: minimapPins)
+                            .frame(width: 140, height: 140)
+                    }
                 }
                 .padding()
             }
+
+            if room == nil { noRoomOverlay }
+            if showCoach || (!coachSeen && room != nil) { coachOverlay }
         }
         .animation(.spring(duration: 0.3), value: card != nil)
+        .animation(.spring(duration: 0.3),
+                   value: engine.locateTarget != nil)
         .onAppear {
             session.engine = engine
             session.capture = capture
@@ -85,13 +104,27 @@ struct ScanView: View {
             Button("Save") { applyName(draftName) }
             Button("Cancel", role: .cancel) {}
         }
+        .sheet(isPresented: $showSummary) {
+            ScanSummarySheet(room: room, selectedTab: $selectedTab)
+                .presentationDetents([.medium, .large])
+        }
     }
 
     // ---- pieces ----------------------------------------------------------
 
-    private var pins: [(id: UUID, x: Double, y: Double, height: Double)] {
-        (room?.things ?? []).map {
-            ($0.id, $0.positionX, $0.positionY, $0.heightM)
+    private var pins: [(id: UUID, x: Double, y: Double, height: Double,
+                        highlighted: Bool)] {
+        let target = engine.locateTarget?.thingID
+        return (room?.things ?? []).map {
+            ($0.id, $0.positionX, $0.positionY, $0.heightM,
+             $0.id == target)
+        }
+    }
+
+    private var minimapPins: [(x: Double, y: Double, highlighted: Bool)] {
+        let target = engine.locateTarget?.thingID
+        return (room?.things ?? []).map {
+            ($0.positionX, $0.positionY, $0.id == target)
         }
     }
 
@@ -114,7 +147,25 @@ struct ScanView: View {
             }
         }
         .accessibilityLabel("Aim reticle. Hold steady on an object to "
-                            + "remember it.")
+                            + "remember it, or use the shutter button.")
+    }
+
+    /// Deliberate capture for when holding steady is awkward — kneeling
+    /// under a desk, holding a pet, one-handed.
+    private var shutterButton: some View {
+        Button {
+            session.captureNow()
+        } label: {
+            ZStack {
+                Circle().fill(.white.opacity(0.25))
+                    .frame(width: 58, height: 58)
+                Circle().fill(.white)
+                    .frame(width: 46, height: 46)
+            }
+        }
+        .disabled(capture.busy || !session.floorFound)
+        .opacity(session.floorFound ? 1 : 0.4)
+        .accessibilityLabel("Capture what the camera is pointing at")
     }
 
     private var topBar: some View {
@@ -128,10 +179,22 @@ struct ScanView: View {
                         .font(.caption.bold())
                         .foregroundStyle(.red)
                 }
-                Text("\(Int(engine.coverage * 100))% mapped")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(engine.coverage > 0.6
-                                     ? .green : .orange)
+                coverageBadge
+                Button {
+                    showCoach = true
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                        .font(.body)
+                }
+                .accessibilityLabel("How to scan")
+                Button("Finish") {
+                    persist()
+                    showSummary = true
+                }
+                .font(.subheadline.bold())
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(engine.scanComplete ? .green : .cyan)
             }
             if engine.trackingLimited {
                 Text(session.trackingState)
@@ -147,6 +210,23 @@ struct ScanView: View {
         .padding(.top, 6)
     }
 
+    /// "Done" is a state, not a percentage — a raw fraction stalls in
+    /// the 70s forever (frontier under furniture) and reads as failure.
+    private var coverageBadge: some View {
+        Group {
+            if engine.scanComplete {
+                Label("Complete", systemImage: "checkmark.circle.fill")
+                    .font(.caption.bold())
+                    .foregroundStyle(.green)
+            } else {
+                Text("\(Int(min(0.99, engine.coverage) * 100))% mapped")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(engine.coverage > 0.6
+                                     ? .green : .orange)
+            }
+        }
+    }
+
     private var hintBubble: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let saveNotice {
@@ -154,14 +234,16 @@ struct ScanView: View {
                     .font(.caption)
                     .foregroundStyle(.green)
             }
-            Text(capture.hint.isEmpty ? engine.scanHint : capture.hint)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.85))
+            Label(capture.hint.isEmpty ? engine.scanHint : capture.hint,
+                  systemImage: engine.scanComplete
+                  ? "checkmark.circle" : "wand.and.rays")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.white)
         }
-        .padding(8)
-        .background(.black.opacity(0.5),
+        .padding(10)
+        .background(.black.opacity(0.55),
                     in: RoundedRectangle(cornerRadius: 10))
-        .frame(maxWidth: 190, alignment: .leading)
+        .frame(maxWidth: 200, alignment: .leading)
     }
 
     private func captureCard(_ captured: CapturedObject) -> some View {
@@ -194,13 +276,94 @@ struct ScanView: View {
     }
 
     private func sizeLine(_ c: CapturedObject) -> String {
+        guard c.widthM > 0 else {
+            return "saved — size unknown, re-look from closer to measure"
+        }
         let w = c.widthM * 100
         let h = c.physicalHeightM * 100
         let size = (w >= 100 || h >= 100)
             ? String(format: "%.2f × %.2f m", c.widthM, c.physicalHeightM)
             : String(format: "%.0f × %.0f cm", w, h)
         let quality = c.sizeConfidence > 0.5 ? "" : " (rough)"
-        return size + quality + String(format: " · %.1f m away", c.depthM)
+        return size + quality
+            + String(format: " · %.1f m away", c.depthM)
+    }
+
+    // ---- overlays --------------------------------------------------------
+
+    private var noRoomOverlay: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "square.grid.2x2")
+                .font(.system(size: 44))
+                .foregroundStyle(.cyan)
+            Text("Pick a room first")
+                .font(.title3.bold())
+            Text("Every scan belongs to a room so its map and "
+                 + "things stay together.")
+                .font(.callout)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            Button("Choose a room") { selectedTab = 3 }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(28)
+        .background(.ultraThinMaterial,
+                    in: RoundedRectangle(cornerRadius: 20))
+        .padding(40)
+    }
+
+    private var coachOverlay: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text("How to scan")
+                .font(.title.bold())
+                .frame(maxWidth: .infinity, alignment: .center)
+            coachRow(icon: "arrow.left.and.right",
+                     title: "Sweep the floor first",
+                     text: "Point down-and-ahead and pan slowly until "
+                     + "the map in the corner starts filling in.")
+            coachRow(icon: "figure.walk",
+                     title: "Walk the edges",
+                     text: "Keep the camera where the floor meets the "
+                     + "walls. Follow the hint — it points at whatever "
+                     + "is still unmapped.")
+            coachRow(icon: "arrow.down.forward.circle",
+                     title: "Tilt down over furniture",
+                     text: "Aim across tabletops and chairs so they "
+                     + "become obstacles on the map, not empty space.")
+            coachRow(icon: "circle.circle",
+                     title: "Point at things to save them",
+                     text: "Hold the circle on any object for a second "
+                     + "— photo, size and location are remembered. The "
+                     + "white button captures instantly.")
+            Button {
+                coachSeen = true
+                showCoach = false
+            } label: {
+                Text("Got it")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(24)
+        .background(.regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 22))
+        .padding(24)
+    }
+
+    private func coachRow(icon: String, title: String,
+                          text: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(.cyan)
+                .frame(width: 34)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(text).font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     // ---- actions ---------------------------------------------------------
@@ -210,6 +373,7 @@ struct ScanView: View {
         guard !trimmed.isEmpty, let thing = cardThing else { return }
         thing.displayName = trimmed
         thing.userNamed = true
+        SpotlightIndex.index(thing)
         saveNotice = "Saved \"\(trimmed)\""
         card = nil
     }
@@ -249,6 +413,163 @@ struct ScanView: View {
             if !room.isDeleted, ok {
                 room.hasWorldMap = true
             }
+        }
+    }
+}
+
+// ---- after the scan ------------------------------------------------------
+
+/// "What now?" — the screen the first field test was missing. Saves are
+/// already done by the time this appears; it exists to show the result
+/// and hand the user somewhere useful to go.
+struct ScanSummarySheet: View {
+    @EnvironmentObject var engine: NavEngine
+    @Environment(\.dismiss) private var dismiss
+    let room: Room?
+    @Binding var selectedTab: Int
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Capsule().fill(.tertiary).frame(width: 36, height: 5)
+                .padding(.top, 8)
+            Text(room?.name ?? "Room")
+                .font(.title2.bold())
+            MinimapView(pins: pins)
+                .frame(height: 190)
+                .padding(.horizontal)
+
+            HStack(spacing: 0) {
+                stat(value: String(format: "%.0f m²",
+                                   engine.floorAreaM2),
+                     label: "floor mapped")
+                Divider().frame(height: 34)
+                stat(value: "\(room?.things.count ?? 0)",
+                     label: "things saved")
+                Divider().frame(height: 34)
+                stat(value: engine.scanComplete ? "✓" : "…",
+                     label: engine.scanComplete
+                     ? "complete" : "keep sweeping")
+            }
+            .padding(.vertical, 6)
+
+            Button {
+                selectedTab = 2
+                dismiss()
+            } label: {
+                Label("See everything I saved",
+                      systemImage: "shippingbox")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.horizontal)
+
+            Button("Keep scanning") { dismiss() }
+                .padding(.bottom, 10)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var pins: [(x: Double, y: Double, highlighted: Bool)] {
+        (room?.things ?? []).map { ($0.positionX, $0.positionY, false) }
+    }
+
+    private func stat(value: String, label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value).font(.title3.bold())
+            Text(label).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// ---- locate-in-camera ----------------------------------------------------
+
+/// The "find my thing" experience: the camera stays up, the item's pin
+/// glows green in AR, and this bar tracks live distance and direction
+/// with haptic ticks that quicken as you close in. Turn-by-turn stays
+/// one tap away for when a route actually helps.
+struct LocateBar: View {
+    @EnvironmentObject var engine: NavEngine
+    @State private var lastTick = Date.distantPast
+
+    var body: some View {
+        guard let target = engine.locateTarget else {
+            return AnyView(EmptyView())
+        }
+        let dx = target.x - engine.pose.x
+        let dy = target.y - engine.pose.y
+        let distance = (dx * dx + dy * dy).squareRoot()
+        let bearing = atan2(dy, dx)
+        let rel = wrapAngle(bearing - engine.pose.heading)
+
+        return AnyView(
+            HStack(spacing: 12) {
+                ThingThumbnail(thingID: target.thingID)
+                    .frame(width: 46, height: 46)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(target.name).font(.headline).lineLimit(1)
+                    Text(distance < 0.8
+                         ? "Right here — look around"
+                         : String(format: "%.1f m away", distance))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "location.north.fill")
+                    .font(.title2)
+                    .foregroundStyle(.green)
+                    .rotationEffect(.radians(-rel))
+                    .accessibilityLabel(directionWords(rel))
+                Button {
+                    engine.startGuidance(
+                        to: Vec(target.x, target.y),
+                        name: target.name)
+                } label: {
+                    Image(systemName: "figure.walk")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("Turn-by-turn guidance")
+                Button {
+                    engine.locateTarget = nil
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("Stop locating")
+            }
+            .padding(10)
+            .background(.ultraThinMaterial,
+                        in: RoundedRectangle(cornerRadius: 14))
+            .onChange(of: engine.pose.x) { _, _ in
+                tick(distance: distance)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(
+                "\(target.name), \(String(format: "%.1f", distance)) "
+                + "meters, \(directionWords(rel))")
+        )
+    }
+
+    /// Geiger-counter haptics: period shrinks as distance does.
+    private func tick(distance: Double) {
+        let period = max(0.25, min(1.6, distance * 0.35))
+        guard Date().timeIntervalSince(lastTick) > period else { return }
+        lastTick = Date()
+        let strength = distance < 1.5 ? 0.9 : 0.5
+        UIImpactFeedbackGenerator(style: .light)
+            .impactOccurred(intensity: strength)
+    }
+
+    private func directionWords(_ rel: Double) -> String {
+        let deg = rel * 180 / .pi
+        switch deg {
+        case -30...30: return "ahead"
+        case 30...110: return "to your left"
+        case -110...(-30): return "to your right"
+        default: return "behind you"
         }
     }
 }

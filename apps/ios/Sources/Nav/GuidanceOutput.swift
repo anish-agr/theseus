@@ -17,9 +17,12 @@ final class GuidanceOutput {
         try? hapticEngine?.start()
     }
 
-    func update(cue: GuidanceCue?) {
+    /// Haptics always run (silent, glanceable); speech only when the
+    /// user has unmuted — a phone talking uninvited is embarrassing in
+    /// any shared space, so voice is opt-in per session.
+    func update(cue: GuidanceCue?, voice: Bool) {
         guard let cue else { return }
-        speak(cue)
+        if voice { speak(cue) }
         buzz(cue)
     }
 

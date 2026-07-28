@@ -1,11 +1,13 @@
 // Full-screen guidance. Deliberately huge and glanceable: it is used
 // while walking, sometimes by someone who can barely see it, so the
-// same cue is carried by shape, words, speech and haptics at once.
+// same cue is carried by shape, words, haptics — and speech once the
+// user unmutes it (never uninvited).
 import NavCore
 import SwiftUI
 
 struct GuidanceView: View {
     @EnvironmentObject var engine: NavEngine
+    @AppStorage("guidanceVoice") private var voiceOn = false
     @State private var output = GuidanceOutput()
     @State private var lastSpoken: CueKind?
 
@@ -13,6 +15,28 @@ struct GuidanceView: View {
         ZStack {
             Rectangle().fill(background).ignoresSafeArea()
             VStack(spacing: 20) {
+                HStack {
+                    MinimapView(interactive: true)
+                        .frame(width: 110, height: 110)
+                        .opacity(0.9)
+                    Spacer()
+                    Button {
+                        voiceOn.toggle()
+                    } label: {
+                        Image(systemName: voiceOn
+                              ? "speaker.wave.2.fill"
+                              : "speaker.slash.fill")
+                            .font(.title2)
+                            .frame(width: 48, height: 48)
+                            .background(.ultraThinMaterial,
+                                        in: Circle())
+                    }
+                    .accessibilityLabel(voiceOn
+                        ? "Mute voice guidance"
+                        : "Unmute voice guidance")
+                }
+                .padding(.horizontal)
+
                 Spacer()
                 Image(systemName: arrowName)
                     .font(.system(size: 120, weight: .bold))
@@ -25,29 +49,29 @@ struct GuidanceView: View {
                     .font(.title3)
                     .foregroundStyle(.secondary)
 
-                corridorBar
-                    .padding(.horizontal, 40)
-                    .padding(.top, 8)
+                if engine.cue != nil {
+                    corridorBar
+                        .padding(.horizontal, 40)
+                        .padding(.top, 8)
+                }
 
                 Spacer()
-                HStack {
-                    MinimapView().frame(width: 130, height: 130)
-                        .opacity(0.9)
-                    Spacer()
-                    Button(role: .destructive) {
-                        engine.clearGuidance()
-                    } label: {
-                        Label("Stop", systemImage: "xmark.circle.fill")
-                            .font(.title3)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                Button {
+                    engine.clearGuidance()
+                } label: {
+                    Label("End guidance", systemImage: "xmark")
+                        .font(.title3.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
                 }
-                .padding()
+                .buttonStyle(.borderedProminent)
+                .tint(.red.opacity(0.85))
+                .padding(.horizontal, 40)
+                .padding(.bottom, 12)
             }
         }
         .onReceive(engine.$cue) { cue in
-            output.update(cue: cue)
+            output.update(cue: cue, voice: voiceOn)
             if let cue, cue.kind != lastSpoken {
                 lastSpoken = cue.kind
                 UIAccessibility.post(notification: .announcement,
@@ -90,7 +114,7 @@ struct GuidanceView: View {
         case .turnRight: return "Turn right"
         case .arrive: return "Arrived"
         case .offRoute: return "Off route"
-        case nil: return "Planning…"
+        case nil: return "Rerouting…"
         }
     }
 
