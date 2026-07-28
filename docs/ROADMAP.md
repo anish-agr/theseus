@@ -48,27 +48,25 @@ against synthetic ground truth; what remains needs a real model + footage.
 - Acceptance: a video of a room becomes a plausible occupancy slice +
   labeled waypoint set, replayed in the viewer. **Met, on real footage.**
 
-## M1 — Mac + Xcode: the app exists
+## M1 — the app exists (done WITHOUT a Mac — docs/NO-MAC.md)
 
-*(The NavCore port itself needs NO Mac — Swift-on-Windows, see
-docs/NO-MAC.md. Started 2026-07-26: apps/navcore with geometry ported
-and parity-tested against Python-generated fixtures; CI builds it on
-Linux every push.)*
-
-- [ ] Xcode project skeleton (SwiftUI + RealityKit + ARKit session mgmt)
-- [~] Port engine to Swift package `NavCore`, module-by-module, tests
-      first; golden scenario hashes reproduced. Done on Windows so far
-      (all verified against Python-generated parity fixtures, 27 Swift
-      tests): geometry, grid (canonical cost model + clearance,
-      bit-exact), astar (paths cell-for-cell), **dstar_lite (matches
-      Python AND Swift A* through scripted world edits)**, fsm
-      (exhaustive), flowfield (fields bit-exact). Remaining: frontier,
-      coverage, queries, waypoints, serialize, steering, guidance,
-      sim, controller, trace + golden JSONL replay
-- [ ] XR provider: plane detection + filtered feature points → grid
-- [ ] Diagnostic overlay v0: grid decal + path + agent on camera feed
-- [ ] On-device trace recorder (same JSONL schema)
+- [x] **Port engine to Swift package `NavCore` — COMPLETE 2026-07-27.**
+      Every module, verified against Python-generated parity fixtures
+      (42 Swift tests), culminating in the acceptance milestone: the
+      Swift engine REPLAYS ALL THREE GOLDEN SCENARIOS FRAME-FOR-FRAME
+      (mini guidance incl. live D* Lite reroutes around a mover,
+      mini-explore, mini-walk with safety gates).
+- [x] App skeleton (SwiftUI + RealityKit + ARKit session mgmt) —
+      apps/ios, XcodeGen spec, **builds green on GitHub's macOS
+      runners; unsigned Theseus.ipa artifact per push**
+- [x] XR provider v0 written: floor/vertical plane anchors + height-
+      banded feature points with persistence → grid (on-device analog
+      of the tested Lane A pipeline) — needs on-device validation
+- [x] Diagnostic overlay v0 written: live minimap + AR breadcrumbs +
+      goal pin + agent entity — needs on-device validation
+- [x] On-device trace recorder (same JSONL schema) + share-sheet export
 - Acceptance: iPhone XR maps a room live and a virtual agent walks it.
+  *(Code complete + cloud-built; awaiting first sideload.)*
 
 ## M2 — LiDAR, persistence, waypoints, house scale
 
