@@ -56,7 +56,9 @@ struct ThreadShape: Shape {
         p.addCurve(to: pt(0.38, 0.72),
                    control1: pt(0.38 - k, 0.46),
                    control2: pt(0.38 - k, 0.72))
-        p.addLine(to: pt(0.72, 0.72))
+        // run all the way INTO the destination dot — the thread and
+        // the destination are one thing, never separated by a gap
+        p.addLine(to: pt(0.76, 0.72))
         return p
     }
 
@@ -88,11 +90,17 @@ struct ThreadView: View {
                 ThreadShape()
                     .trim(from: from, to: to)
                     .stroke(
+                        // royal blue at the origin brightening to the
+                        // electric highlight near the destination —
+                        // the light lives where you're headed
                         LinearGradient(
-                            colors: [Color.brandThread.opacity(0.75),
-                                     Color.brandThread],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing),
+                            colors: [Color(red: 0.16, green: 0.38,
+                                           blue: 0.92),
+                                     Color.brandThread,
+                                     Color(red: 0.52, green: 0.83,
+                                           blue: 1.0)],
+                            startPoint: .leading,
+                            endPoint: .trailing),
                         style: StrokeStyle(lineWidth: s * 0.085,
                                            lineCap: .round,
                                            lineJoin: .round))

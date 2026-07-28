@@ -98,7 +98,10 @@ enum AIProviderKind: String, CaseIterable, Identifiable {
 
     var defaultModel: String {
         switch self {
-        case .gemini: return "gemini-2.5-flash"
+        // Google retires model ids on a schedule (2.5-flash died for
+        // new keys mid-2026); a 404 triggers auto-discovery below, so
+        // this default only has to be right-ish, not eternal.
+        case .gemini: return "gemini-3.6-flash"
         case .anthropic: return "claude-haiku-4-5"
         case .custom: return ""
         }
@@ -113,6 +116,9 @@ final class AIService: ObservableObject {
         = AIProviderKind.gemini.rawValue
     @AppStorage("aiModelOverride") var modelOverride = ""
     @AppStorage("aiCustomEndpoint") var customEndpoint = ""
+    /// Model name learned from Google's own list after a 404 — the
+    /// self-healing answer to Google retiring model ids under us.
+    @AppStorage("aiGeminiResolved") var geminiResolved = ""
     /// Bumped so views re-read isConfigured after a key edit.
     @Published var keyEdition = 0
 
@@ -128,7 +134,11 @@ final class AIService: ObservableObject {
     var isConfigured: Bool { apiKey != nil }
 
     var model: String {
-        modelOverride.isEmpty ? kind.defaultModel : modelOverride
+        if !modelOverride.isEmpty { return modelOverride }
+        if kind == .gemini, !geminiResolved.isEmpty {
+            return geminiResolved
+        }
+        return kind.defaultModel
     }
 
     func setKey(_ value: String) {
@@ -235,6 +245,26 @@ final class AIService: ObservableObject {
                             maxTokens: Int) async throws -> String {
         guard let key = apiKey else { throw AIError.notConfigured }
         let jpeg = image.flatMap { Self.downscaledJPEG($0) }
+        do {
+            return try await performCall(key: key, model: model,
+                                         prompt: prompt, jpeg: jpeg,
+                                         maxTokens: maxTokens)
+        } catch AIError.http(let code, _)
+            where code == 404 && kind == .gemini {
+            // Google retired this model id for this key. Ask the API
+            // what the key CAN run, remember it, and retry once.
+            let discovered = try await Self.discoverGeminiModel(
+                key: key)
+            geminiResolved = discovered
+            return try await performCall(key: key, model: discovered,
+                                         prompt: prompt, jpeg: jpeg,
+                                         maxTokens: maxTokens)
+        }
+    }
+
+    private func performCall(key: String, model: String,
+                             prompt: String, jpeg: Data?,
+                             maxTokens: Int) async throws -> String {
         let request: URLRequest
         switch kind {
         case .gemini:
@@ -265,6 +295,55 @@ final class AIService: ObservableObject {
                 String(data: data, encoding: .utf8) ?? "empty")
         }
         return text
+    }
+
+    /// GET /v1beta/models with this key, pick the newest general
+    /// flash model that supports generateContent. Skips the special-
+    /// purpose ids (lite/tts/image/embedding/thinking/live).
+    static func discoverGeminiModel(key: String) async throws
+        -> String {
+        var req = URLRequest(url: URL(
+            string: "https://generativelanguage.googleapis.com"
+                + "/v1beta/models?pageSize=200")!)
+        req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        let (data, response) = try await URLSession.shared.data(
+            for: req)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(code),
+              let obj = try? JSONSerialization.jsonObject(with: data)
+                as? [String: Any],
+              let models = obj["models"] as? [[String: Any]] else {
+            throw AIError.http(code, "couldn't list this key's "
+                               + "available Gemini models")
+        }
+        let names = models.compactMap { entry -> String? in
+            guard let name = entry["name"] as? String,
+                  let methods = entry["supportedGenerationMethods"]
+                    as? [String],
+                  methods.contains("generateContent") else {
+                return nil
+            }
+            return name.replacingOccurrences(of: "models/", with: "")
+        }
+        let special = ["lite", "tts", "audio", "image", "imagen",
+                       "veo", "embedding", "thinking", "live", "aqa",
+                       "gemma", "learnlm", "exp", "8b"]
+        func general(_ n: String) -> Bool {
+            special.allSatisfy { !n.contains($0) }
+        }
+        // descending sort puts higher version numbers (and the
+        // "-latest" aliases) first
+        let flash = names.filter { $0.contains("flash") && general($0) }
+            .sorted(by: >)
+        if let best = flash.first { return best }
+        let pro = names.filter { $0.contains("pro") && general($0) }
+            .sorted(by: >)
+        if let best = pro.first { return best }
+        guard let any = names.sorted(by: >).first else {
+            throw AIError.badReply(
+                "this key has no usable Gemini model")
+        }
+        return any
     }
 
     private static func geminiRequest(key: String, model: String,

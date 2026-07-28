@@ -37,9 +37,27 @@ $path.AddBezier((P 0.58 0.20), (P ($k + 0.58) 0.20),
 $path.AddLine((P 0.58 0.46), (P 0.38 0.46))
 $path.AddBezier((P 0.38 0.46), (P (0.38 - $k) 0.46),
                 (P (0.38 - $k) 0.72), (P 0.38 0.72))
-$path.AddLine((P 0.38 0.72), (P 0.72 0.72))
+# the final run continues INTO the dot — thread and destination are
+# one thing, never separated by a gap
+$path.AddLine((P 0.38 0.72), (P 0.76 0.72))
 
-$pen = New-Object Drawing.Pen([Drawing.Color]::FromArgb(255, 51, 168, 255), [single](0.085 * $W))
+# royal blue at the origin brightening to the electric highlight near
+# the destination (matches ThreadView's gradient in Brand.swift)
+$gradRect = New-Object Drawing.RectangleF([single](0.18 * $W), 0,
+                                          [single](0.72 * $W), [single]$W)
+$threadBrush = New-Object Drawing.Drawing2D.LinearGradientBrush(
+    $gradRect,
+    [Drawing.Color]::FromArgb(255, 41, 97, 235),
+    [Drawing.Color]::FromArgb(255, 133, 212, 255),
+    0.0)
+$blend = New-Object Drawing.Drawing2D.ColorBlend(3)
+$blend.Colors = @(
+    [Drawing.Color]::FromArgb(255, 41, 97, 235),
+    [Drawing.Color]::FromArgb(255, 51, 168, 255),
+    [Drawing.Color]::FromArgb(255, 133, 212, 255))
+$blend.Positions = @([single]0.0, [single]0.55, [single]1.0)
+$threadBrush.InterpolationColors = $blend
+$pen = New-Object Drawing.Pen($threadBrush, [single](0.085 * $W))
 $pen.LineJoin = 'Round'
 $pen.StartCap = 'Round'
 $pen.EndCap = 'Round'
