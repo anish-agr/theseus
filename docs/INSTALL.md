@@ -79,6 +79,30 @@ Sideloadly's build or in Apple's auth endpoints. In that case:
    DLL path entirely, which is the part that breaks.
 3. Otherwise, route B.
 
+## Route A2 — AltServer / AltStore Classic
+
+A separate implementation of the same free-Apple-ID signing, worth
+trying when Sideloadly's own login fails. Its prerequisite is iTunes
+**and iCloud** installed from Apple directly — the Microsoft Store
+builds are rejected. AltServer needs `AOSKit.dll`, which ships with
+iCloud, not iTunes.
+
+If a cleanup ever deleted iCloud's files while leaving it registered
+with Windows Installer, repair fails asking for `iCloud64.msi` from a
+temp folder that no longer exists. Fix:
+
+```bash
+powershell -File tools/altserver/fix-icloud.ps1
+```
+
+It fetches the exact build AltStore's guide specifies from Apple's CDN,
+unpacks the MSI, and reinstalls with `REINSTALLMODE=vomus` so the
+deleted files are actually rewritten. It exits early if `AOSKit.dll` is
+already present. Then: AltServer tray icon → Install AltStore → trust
+the developer on the phone → sideload the IPA from AltStore itself.
+AltStore re-signs over WiFi every 7 days, so the cable stops being
+needed after setup.
+
 ## Route B — TestFlight
 
 `testflight.yml`, run by hand from the Actions tab. It signs with a
