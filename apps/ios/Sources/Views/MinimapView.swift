@@ -15,9 +15,11 @@ struct MinimapView: View {
     var interactive: Bool = false
     /// Remembered things drawn as dots; the located one is highlighted.
     var pins: [(x: Double, y: Double, highlighted: Bool)] = []
-    @State private var snapshot: [UInt8] = []
-    @State private var snapshotWidth = 0
-    @State private var snapshotHeight = 0
+    /// The grid rasterized ONCE per gridRevision (~1 Hz). Drawing it
+    /// as a single image blit instead of ~80k per-cell path fills per
+    /// frame is the difference between a smooth camera and a slideshow
+    /// (field test 3).
+    @State private var snapshotImage: CGImage?
 
     var body: some View {
         GeometryReader { geo in
@@ -40,17 +42,37 @@ struct MinimapView: View {
 
     private func refresh() {
         let g = engine.grid
-        var snap = [UInt8](repeating: 0, count: g.width * g.height)
-        for i in 0..<g.lo.count {
-            if g.lo[i] >= LO_OCC {
-                snap[i] = 2
-            } else if g.lo[i] <= LO_FREE {
-                snap[i] = 1
+        let w = g.width
+        let h = g.height
+        // RGBA pixels, one per cell; the grid's +y up flips to the
+        // image's row 0 at top
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        for y in 0..<h {
+            let row = (h - 1 - y) * w
+            for x in 0..<w {
+                let lo = g.lo[y * w + x]
+                let i = (row + x) * 4
+                if lo >= LO_OCC {
+                    pixels[i] = 217; pixels[i + 1] = 166
+                    pixels[i + 2] = 64; pixels[i + 3] = 255
+                } else if lo <= LO_FREE {
+                    pixels[i] = 26; pixels[i + 1] = 71
+                    pixels[i + 2] = 71; pixels[i + 3] = 255
+                }
             }
         }
-        snapshot = snap
-        snapshotWidth = g.width
-        snapshotHeight = g.height
+        let data = Data(pixels)
+        guard let provider = CGDataProvider(data: data as CFData) else {
+            return
+        }
+        snapshotImage = CGImage(
+            width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: w * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(
+                rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false,
+            intent: .defaultIntent)
     }
 
     private func routeTo(_ point: CGPoint, in size: CGSize) {
@@ -64,29 +86,19 @@ struct MinimapView: View {
 
     private func draw(ctx: GraphicsContext, size: CGSize) {
         let g = engine.grid
-        guard snapshot.count == snapshotWidth * snapshotHeight,
-              snapshotWidth == g.width else { return }
         let scale = min(size.width, size.height)
             / CGFloat(Double(g.width) * g.cellSize)
-        let cellPx = scale * CGFloat(g.cellSize)
 
         func toPx(_ p: Vec) -> CGPoint {
             CGPoint(x: CGFloat(p.x - g.origin.x) * scale,
                     y: size.height - CGFloat(p.y - g.origin.y) * scale)
         }
 
-        for y in 0..<snapshotHeight {
-            for x in 0..<snapshotWidth {
-                let s = snapshot[y * snapshotWidth + x]
-                guard s != 0 else { continue }
-                let rect = CGRect(x: CGFloat(x) * cellPx,
-                                  y: size.height - CGFloat(y + 1) * cellPx,
-                                  width: cellPx + 0.5,
-                                  height: cellPx + 0.5)
-                ctx.fill(Path(rect), with: .color(
-                    s == 1 ? Color(red: 0.10, green: 0.28, blue: 0.28)
-                           : Color(red: 0.85, green: 0.65, blue: 0.25)))
-            }
+        if let snapshotImage {
+            let side = CGFloat(Double(g.width) * g.cellSize) * scale
+            ctx.draw(Image(decorative: snapshotImage, scale: 1),
+                     in: CGRect(x: 0, y: size.height - side,
+                                width: side, height: side))
         }
 
         if engine.smoothedPath.count >= 2 {

@@ -38,27 +38,46 @@ struct ARViewContainer: UIViewRepresentable {
         var overlay: AnchorEntity?
         private var lastKey = ""
 
+        // meshes/materials built once — regenerating them on every
+        // rebuild churned the render thread (field test 3 choppiness)
+        private static let routeMesh = MeshResource.generateSphere(
+            radius: 0.035)
+        private static let routeMat = SimpleMaterial(
+            color: UIColor(red: 0.2, green: 0.66, blue: 1, alpha: 1),
+            isMetallic: false)
+        private static let warmColor = UIColor(
+            red: 1.0, green: 0.965, blue: 0.91, alpha: 1)
+        private static let dotMesh = MeshResource.generateSphere(
+            radius: 0.014)
+        private static let dotMat = SimpleMaterial(
+            color: warmColor.withAlphaComponent(0.75),
+            isMetallic: false)
+        private static let orbMesh = MeshResource.generateSphere(
+            radius: 0.04)
+        private static let orbMat = SimpleMaterial(color: warmColor,
+                                                   isMetallic: false)
+
         func rebuild(overlay: AnchorEntity, path: [Vec], goal: Vec?,
                      pins: [(id: UUID, x: Double, y: Double,
                              height: Double, highlighted: Bool)],
                      floorY: Float) {
-            // include floorY: entities placed before the floor was
-            // found would otherwise float at the wrong height forever
+            // include floorY (quantized: it refines by millimetres
+            // constantly, and every key change is a full entity
+            // rebuild): entities placed before the floor was found
+            // would otherwise float at the wrong height forever
             let litID = pins.first(where: \.highlighted)?.id
-            let key = "\(path.count)|\(path.last?.x ?? 0)|"
+            let qFloor = (floorY * 20).rounded() / 20      // 5 cm
+            let qPath = ((path.last?.x ?? 0) * 5).rounded() / 5
+            let key = "\(path.count)|\(qPath)|"
                 + "\(goal?.x ?? 0),\(goal?.y ?? 0)|\(pins.count)|"
-                + "\(floorY)|\(litID?.uuidString ?? "-")"
+                + "\(qFloor)|\(litID?.uuidString ?? "-")"
             guard key != lastKey else { return }
             lastKey = key
             overlay.children.removeAll()
 
             if path.count >= 2 {
-                let mesh = MeshResource.generateSphere(radius: 0.035)
-                // route dots wear the brand thread blue (#33A8FF)
-                let mat = SimpleMaterial(
-                    color: UIColor(red: 0.2, green: 0.66, blue: 1,
-                                   alpha: 1),
-                    isMetallic: false)
+                let mesh = Self.routeMesh
+                let mat = Self.routeMat
                 let total = polylineLength(path)
                 var s = 0.0
                 while s < total {
@@ -74,8 +93,7 @@ struct ARViewContainer: UIViewRepresentable {
             // brand colors in world space: warm destination white,
             // used sparingly — field test 2 called the old fat green
             // beacon and chunky yellow spheres "big and ugly"
-            let warm = UIColor(red: 1.0, green: 0.965, blue: 0.91,
-                               alpha: 1)
+            let warm = Self.warmColor
             if let goal {
                 let pin = ModelEntity(
                     mesh: MeshResource.generateBox(
@@ -91,10 +109,8 @@ struct ARViewContainer: UIViewRepresentable {
             // "this is in your memory", not traffic cones. The located
             // thing gets a slim light-pillar plus a small dot at its
             // own height.
-            let pinMesh = MeshResource.generateSphere(radius: 0.014)
-            let pinMat = SimpleMaterial(
-                color: warm.withAlphaComponent(0.75),
-                isMetallic: false)
+            let pinMesh = Self.dotMesh
+            let pinMat = Self.dotMat
             for pin in pins.prefix(120) {
                 if pin.highlighted {
                     let beacon = ModelEntity(
@@ -107,11 +123,8 @@ struct ARViewContainer: UIViewRepresentable {
                     beacon.position = SIMD3<Float>(
                         Float(pin.x), floorY + 0.75, Float(-pin.y))
                     overlay.addChild(beacon)
-                    let orb = ModelEntity(
-                        mesh: MeshResource.generateSphere(
-                            radius: 0.04),
-                        materials: [SimpleMaterial(
-                            color: warm, isMetallic: false)])
+                    let orb = ModelEntity(mesh: Self.orbMesh,
+                                          materials: [Self.orbMat])
                     orb.position = SIMD3<Float>(
                         Float(pin.x),
                         floorY + Float(max(0.15, pin.height)),

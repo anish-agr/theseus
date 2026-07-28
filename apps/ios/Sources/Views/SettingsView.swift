@@ -10,9 +10,11 @@ struct SettingsView: View {
     @Query private var things: [Thing]
     @StateObject private var embedder = EmbedderManager.shared
     @ObservedObject private var ai = AIService.shared
-    @AppStorage("aiAutoName") private var aiAutoName = true
+    @AppStorage("aiAutoName") private var aiAutoName = false
     @State private var keyDraft = ""
     @State private var aiTestState: AITestState = .idle
+    @State private var modelChoices: [String] = []
+    @State private var loadingModels = false
     @State private var confirmWipe = false
     @State private var showShare = false
 
@@ -30,6 +32,18 @@ struct SettingsView: View {
                     LabeledContent("Rooms", value: "\(rooms.count)")
                     LabeledContent("Things", value: "\(things.count)")
                     LabeledContent("On disk", value: diskUsage)
+                    ForEach(Store.bytesBreakdown(), id: \.label) {
+                        bucket in
+                        if bucket.bytes > 0 {
+                            LabeledContent(bucket.label) {
+                                Text(ByteCountFormatter.string(
+                                    fromByteCount: bucket.bytes,
+                                    countStyle: .file))
+                                .foregroundStyle(.secondary)
+                            }
+                            .font(.caption)
+                        }
+                    }
                     Text("Everything is stored on this iPhone. No "
                          + "account, no server, no upload.")
                         .font(.caption)
@@ -156,6 +170,20 @@ struct SettingsView: View {
                       text: $ai.modelOverride)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
+            if ai.kind == .gemini {
+                Button {
+                    loadModelChoices()
+                } label: {
+                    HStack {
+                        Text("Pick from this key's models")
+                        Spacer()
+                        if loadingModels {
+                            ThreadLoadingView(size: 22)
+                        }
+                    }
+                }
+                .disabled(!ai.isConfigured || loadingModels)
+            }
             HStack {
                 Button("Test") {
                     aiTestState = .testing
@@ -192,8 +220,12 @@ struct SettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(Color.brandDotCool)
             }
-            Toggle("Name unsure captures with AI",
+            Toggle("Live mode: AI names each capture mid-scan",
                    isOn: $aiAutoName)
+            Text("Off (default): scan fast, then identify everything "
+                 + "at once afterwards — Stuff → ✨.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         } header: {
             Text("AI")
         } footer: {
@@ -214,6 +246,37 @@ struct SettingsView: View {
         }
         .onAppear {
             keyDraft = KeyStore.load(account: ai.kind.rawValue) ?? ""
+        }
+        .confirmationDialog(
+            "Models this key can use (best first)",
+            isPresented: Binding(
+                get: { !modelChoices.isEmpty },
+                set: { if !$0 { modelChoices = [] } }),
+            titleVisibility: .visible
+        ) {
+            ForEach(modelChoices.prefix(8), id: \.self) { name in
+                Button(name) {
+                    ai.modelOverride = name
+                    aiTestState = .idle
+                    modelChoices = []
+                }
+            }
+            Button("Cancel", role: .cancel) { modelChoices = [] }
+        }
+    }
+
+    private func loadModelChoices() {
+        guard let key = KeyStore.load(account: ai.kind.rawValue),
+              !key.isEmpty else { return }
+        loadingModels = true
+        Task {
+            defer { loadingModels = false }
+            do {
+                modelChoices = try await AIService
+                    .discoverGeminiModels(key: key)
+            } catch {
+                aiTestState = .failed(error.localizedDescription)
+            }
         }
     }
 

@@ -79,6 +79,7 @@ struct ThreadView: View {
     var threadOpacity: Double = 1
     var dotScale: CGFloat = 1
     var dotGlow: Double = 0        // 0…1, drives the halo
+    var dotOpacity: Double = 1
     var dotColor: Color = .brandDot
 
     var body: some View {
@@ -113,6 +114,7 @@ struct ThreadView: View {
                             radius: s * 0.10 * dotGlow)
                     .shadow(color: dotColor.opacity(0.5 * dotGlow),
                             radius: s * 0.22 * dotGlow)
+                    .opacity(dotOpacity)
                     .position(dot)
             }
         }
@@ -129,27 +131,30 @@ struct ThreadLogoView: View {
 
 // ---- launch ----------------------------------------------------------------
 
-/// Cold-start ritual, ~1.5 s total: only the dot exists, the thread
-/// traces itself backward from the dot as if drawn by an invisible pen,
-/// the dot gives one soft pulse, everything ends completely still, the
-/// overlay hands the screen over.
+/// Cold-start ritual, ~1.5 s total: the thread traces itself backward
+/// as if drawn by an invisible pen; the destination dot appears only
+/// when the thread completes — arrival, not preexistence (Anish,
+/// field test 3) — gives one soft pulse, and everything ends still.
 struct LaunchOverlay: View {
     var onFinished: () -> Void
-    @State private var drawn: CGFloat = 0     // 0 = dot only, 1 = full
+    @State private var drawn: CGFloat = 0.001
     @State private var glow: Double = 0
     @State private var pulse: CGFloat = 1
+    @State private var dotOpacity: Double = 0
 
     var body: some View {
         ZStack {
             Color.brandIndigoDeep.ignoresSafeArea()
             ThreadView(from: 1 - drawn, to: 1,
-                       dotScale: pulse, dotGlow: glow)
+                       dotScale: pulse, dotGlow: glow,
+                       dotOpacity: dotOpacity)
                 .frame(width: 190, height: 190)
         }
         .task {
             withAnimation(.easeInOut(duration: 0.85)) { drawn = 1 }
             try? await Task.sleep(for: .seconds(0.9))
             withAnimation(.easeInOut(duration: 0.28)) {
+                dotOpacity = 1
                 glow = 1
                 pulse = 1.15
             }
@@ -166,27 +171,39 @@ struct LaunchOverlay: View {
 
 // ---- loading ---------------------------------------------------------------
 
-/// The anti-spinner. The thread draws itself toward the destination,
-/// fades, and begins again — slow, almost meditative. The dot never
-/// leaves. Drop-in replacement anywhere a ProgressView would have spun.
+/// The anti-spinner. The thread draws itself toward the destination;
+/// the dot appears WHEN the thread arrives, glows, then both fade and
+/// it begins again — slow, almost meditative. Drop-in replacement
+/// anywhere a ProgressView would have spun.
 struct ThreadLoadingView: View {
     var size: CGFloat = 56
     @State private var to: CGFloat = 0.001
     @State private var threadOpacity: Double = 1
+    @State private var dotOpacity: Double = 0
+    @State private var glow: Double = 0
 
     var body: some View {
         ThreadView(from: 0, to: to,
-                   threadOpacity: threadOpacity, dotGlow: 0.3)
+                   threadOpacity: threadOpacity, dotGlow: glow,
+                   dotOpacity: dotOpacity)
             .frame(width: size, height: size)
             .task {
                 while !Task.isCancelled {
-                    withAnimation(.easeInOut(duration: 1.7)) { to = 1 }
-                    try? await Task.sleep(for: .seconds(1.75))
+                    withAnimation(.easeInOut(duration: 1.5)) { to = 1 }
+                    try? await Task.sleep(for: .seconds(1.5))
                     guard !Task.isCancelled else { break }
-                    withAnimation(.easeOut(duration: 0.5)) {
-                        threadOpacity = 0
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        dotOpacity = 1
+                        glow = 0.8
                     }
-                    try? await Task.sleep(for: .seconds(0.55))
+                    try? await Task.sleep(for: .seconds(0.35))
+                    guard !Task.isCancelled else { break }
+                    withAnimation(.easeOut(duration: 0.45)) {
+                        threadOpacity = 0
+                        dotOpacity = 0
+                        glow = 0
+                    }
+                    try? await Task.sleep(for: .seconds(0.5))
                     to = 0.001
                     threadOpacity = 1
                 }

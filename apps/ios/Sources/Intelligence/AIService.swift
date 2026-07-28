@@ -232,6 +232,50 @@ final class AIService: ObservableObject {
         return (value, (obj["note"] as? String) ?? "")
     }
 
+    /// Batch mode — field test 3's "figure it all out afterwards":
+    /// several photos per request, one JSON array back. Returns
+    /// whatever it could identify, keyed by the caller's ids.
+    func identifyBatch(_ items: [(id: UUID, image: UIImage)])
+        async throws -> [UUID: AIIdentification] {
+        var out: [UUID: AIIdentification] = [:]
+        // 6 photos per call: well inside every provider's limits and
+        // keeps one bad response from sinking the whole batch
+        for chunk in stride(from: 0, to: items.count, by: 6).map({
+            Array(items[$0..<min($0 + 6, items.count)])
+        }) {
+            let prompt = """
+            You will be shown \(chunk.count) photos of household \
+            objects, in order. Identify each one for a home \
+            inventory. Reply with ONLY a strict JSON array of exactly \
+            \(chunk.count) objects, one per photo, same order, each: \
+            {"name": "specific short name a person would say — never \
+            vague words like clothing, container or textile; include \
+            brand/model if visible", "category": "one or two words", \
+            "summary": "one sentence describing it (color, brand, \
+            distinguishing details)", \
+            "estimated_value_\(currencyCode.lowercased())": number or \
+            null (typical used replacement value, \(currencyCode)), \
+            "value_note": "very short basis"}
+            """
+            let text = try await visionCall(
+                prompt: prompt,
+                images: chunk.map(\.image), maxTokens: 1600)
+            guard let arr = Self.jsonArray(in: text) else {
+                throw AIError.badReply(text)
+            }
+            for (i, obj) in arr.enumerated() where i < chunk.count {
+                out[chunk[i].id] = AIIdentification(
+                    name: (obj["name"] as? String) ?? "Object",
+                    category: (obj["category"] as? String) ?? "object",
+                    summary: (obj["summary"] as? String) ?? "",
+                    estimatedValue: Self.number(
+                        obj["estimated_value_\(currencyCode.lowercased())"]),
+                    valueNote: (obj["value_note"] as? String) ?? "")
+            }
+        }
+        return out
+    }
+
     /// Settings "Test" button: cheapest possible round-trip.
     func ping() async throws {
         _ = try await visionCall(
@@ -243,11 +287,18 @@ final class AIService: ObservableObject {
 
     private func visionCall(prompt: String, image: UIImage?,
                             maxTokens: Int) async throws -> String {
+        try await visionCall(prompt: prompt,
+                             images: image.map { [$0] } ?? [],
+                             maxTokens: maxTokens)
+    }
+
+    private func visionCall(prompt: String, images: [UIImage],
+                            maxTokens: Int) async throws -> String {
         guard let key = apiKey else { throw AIError.notConfigured }
-        let jpeg = image.flatMap { Self.downscaledJPEG($0) }
+        let jpegs = images.compactMap { Self.downscaledJPEG($0) }
         do {
             return try await performCall(key: key, model: model,
-                                         prompt: prompt, jpeg: jpeg,
+                                         prompt: prompt, jpegs: jpegs,
                                          maxTokens: maxTokens)
         } catch AIError.http(let code, _)
             where code == 404 && kind == .gemini {
@@ -257,28 +308,28 @@ final class AIService: ObservableObject {
                 key: key)
             geminiResolved = discovered
             return try await performCall(key: key, model: discovered,
-                                         prompt: prompt, jpeg: jpeg,
+                                         prompt: prompt, jpegs: jpegs,
                                          maxTokens: maxTokens)
         }
     }
 
     private func performCall(key: String, model: String,
-                             prompt: String, jpeg: Data?,
+                             prompt: String, jpegs: [Data],
                              maxTokens: Int) async throws -> String {
         let request: URLRequest
         switch kind {
         case .gemini:
             request = try Self.geminiRequest(
-                key: key, model: model, prompt: prompt, jpeg: jpeg,
+                key: key, model: model, prompt: prompt, jpegs: jpegs,
                 maxTokens: maxTokens)
         case .anthropic:
             request = try Self.anthropicRequest(
-                key: key, model: model, prompt: prompt, jpeg: jpeg,
+                key: key, model: model, prompt: prompt, jpegs: jpegs,
                 maxTokens: maxTokens)
         case .custom:
             request = try Self.openAIRequest(
                 endpoint: customEndpoint, key: key, model: model,
-                prompt: prompt, jpeg: jpeg, maxTokens: maxTokens)
+                prompt: prompt, jpegs: jpegs, maxTokens: maxTokens)
         }
         let (data, response) = try await URLSession.shared.data(
             for: request)
@@ -297,11 +348,12 @@ final class AIService: ObservableObject {
         return text
     }
 
-    /// GET /v1beta/models with this key, pick the newest general
-    /// flash model that supports generateContent. Skips the special-
-    /// purpose ids (lite/tts/image/embedding/thinking/live).
-    static func discoverGeminiModel(key: String) async throws
-        -> String {
+    /// GET /v1beta/models with this key: every general-purpose model
+    /// that supports generateContent, best first (flash before pro,
+    /// GA before preview, newer before older). Feeds both the 404
+    /// auto-retry and the Settings model picker.
+    static func discoverGeminiModels(key: String) async throws
+        -> [String] {
         var req = URLRequest(url: URL(
             string: "https://generativelanguage.googleapis.com"
                 + "/v1beta/models?pageSize=200")!)
@@ -331,28 +383,40 @@ final class AIService: ObservableObject {
         func general(_ n: String) -> Bool {
             special.allSatisfy { !n.contains($0) }
         }
-        // descending sort puts higher version numbers (and the
-        // "-latest" aliases) first
+        // newest first; GA names beat previews of the same family
+        func newest(_ a: String, _ b: String) -> Bool {
+            let ap = a.contains("preview")
+            let bp = b.contains("preview")
+            if ap != bp { return !ap }
+            return a > b
+        }
         let flash = names.filter { $0.contains("flash") && general($0) }
-            .sorted(by: >)
-        if let best = flash.first { return best }
-        let pro = names.filter { $0.contains("pro") && general($0) }
-            .sorted(by: >)
-        if let best = pro.first { return best }
-        guard let any = names.sorted(by: >).first else {
+            .sorted(by: newest)
+        let pro = names.filter {
+            $0.contains("pro") && general($0)
+        }.sorted(by: newest)
+        let rest = names.sorted(by: newest)
+        return flash + pro + rest
+    }
+
+    /// First choice from the ranked list — used by the 404 retry.
+    static func discoverGeminiModel(key: String) async throws
+        -> String {
+        guard let best = try await discoverGeminiModels(
+            key: key).first else {
             throw AIError.badReply(
                 "this key has no usable Gemini model")
         }
-        return any
+        return best
     }
 
     private static func geminiRequest(key: String, model: String,
-                                      prompt: String, jpeg: Data?,
+                                      prompt: String, jpegs: [Data],
                                       maxTokens: Int) throws -> URLRequest {
         let url = URL(string: "https://generativelanguage.googleapis.com"
             + "/v1beta/models/\(model):generateContent")!
         var parts: [[String: Any]] = [["text": prompt]]
-        if let jpeg {
+        for jpeg in jpegs {
             parts.append(["inline_data": [
                 "mime_type": "image/jpeg",
                 "data": jpeg.base64EncodedString(),
@@ -374,11 +438,11 @@ final class AIService: ObservableObject {
     }
 
     private static func anthropicRequest(key: String, model: String,
-                                         prompt: String, jpeg: Data?,
+                                         prompt: String, jpegs: [Data],
                                          maxTokens: Int) throws
         -> URLRequest {
         var content: [[String: Any]] = []
-        if let jpeg {
+        for jpeg in jpegs {
             content.append(["type": "image", "source": [
                 "type": "base64", "media_type": "image/jpeg",
                 "data": jpeg.base64EncodedString(),
@@ -404,7 +468,8 @@ final class AIService: ObservableObject {
 
     private static func openAIRequest(endpoint: String, key: String,
                                       model: String, prompt: String,
-                                      jpeg: Data?, maxTokens: Int) throws
+                                      jpegs: [Data],
+                                      maxTokens: Int) throws
         -> URLRequest {
         let base = endpoint.hasSuffix("/")
             ? String(endpoint.dropLast()) : endpoint
@@ -413,7 +478,7 @@ final class AIService: ObservableObject {
             throw AIError.http(0, "Endpoint must be an https URL")
         }
         var content: [[String: Any]] = [["type": "text", "text": prompt]]
-        if let jpeg {
+        for jpeg in jpegs {
             content.append(["type": "image_url", "image_url": [
                 "url": "data:image/jpeg;base64,"
                     + jpeg.base64EncodedString(),

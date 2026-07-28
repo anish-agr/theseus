@@ -20,7 +20,9 @@ struct ScanView: View {
     @ObservedObject private var ai = AIService.shared
     @Query private var allThings: [Thing]
     @Query private var spots: [StorageSpot]
-    @AppStorage("aiAutoName") private var aiAutoName = true
+    // default OFF: batch identification after the scan (AIReviewView)
+    // is the primary mode; live per-capture naming is the opt-in
+    @AppStorage("aiAutoName") private var aiAutoName = false
     @State private var card: CapturedObject?
     @State private var cardThing: Thing?
     @State private var cardWasNew = false
@@ -42,6 +44,26 @@ struct ScanView: View {
         ZStack {
             ARViewContainer(sessionManager: session, thingPins: pins)
                 .ignoresSafeArea()
+
+            // the lock-on frame: what a capture would actually save —
+            // no more "it detects stuff off to the side"
+            GeometryReader { _ in
+                if let box = session.subjectBox, room != nil {
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(lensOn ? Color.brandDot
+                                       : Color.brandThread,
+                                lineWidth: 2.5)
+                        .shadow(color: (lensOn ? Color.brandDot
+                                              : Color.brandThread)
+                            .opacity(0.55), radius: 6)
+                        .frame(width: box.width, height: box.height)
+                        .position(x: box.midX, y: box.midY)
+                        .animation(.easeInOut(duration: 0.2),
+                                   value: box)
+                }
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
 
             reticle
 
@@ -88,6 +110,9 @@ struct ScanView: View {
             if room == nil { noRoomOverlay }
             if showCoach || (!coachSeen && room != nil) { coachOverlay }
         }
+        // camera-first: the tab bar keeps its icons but loses its
+        // slab, fading into the feed instead of sitting on it
+        .toolbarBackground(.hidden, for: .tabBar)
         .animation(.spring(duration: 0.3), value: card != nil)
         .animation(.spring(duration: 0.3),
                    value: engine.locateTarget != nil)
@@ -576,6 +601,16 @@ struct ScanView: View {
                 .controlSize(.small)
                 .tint(engine.scanComplete
                       ? .green : Color.brandThread)
+                // the plain way OUT — field test 3: leaving the
+                // scanner shouldn't require ceremony
+                Button {
+                    persist()
+                    selectedTab = 0
+                } label: {
+                    Image(systemName: "house")
+                        .font(.body)
+                }
+                .accessibilityLabel("Back to Home")
             }
             if engine.trackingLimited {
                 Text(session.trackingState)
@@ -591,8 +626,9 @@ struct ScanView: View {
         .padding(.top, 6)
     }
 
-    /// "Done" is a state, not a percentage — a raw fraction stalls in
-    /// the 70s forever (frontier under furniture) and reads as failure.
+    /// "Done" is a state; progress is AREA. A percentage — even a
+    /// massaged one — always looks stuck at some number (field tests
+    /// 1 and 3); square metres only ever grow.
     private var coverageBadge: some View {
         Group {
             if engine.scanComplete {
@@ -604,10 +640,10 @@ struct ScanView: View {
                 .font(.caption.bold())
                 .foregroundStyle(.green)
             } else {
-                Text("\(Int(min(0.99, engine.coverage) * 100))% mapped")
+                Text(String(format: "%.0f m² mapped",
+                            engine.floorAreaM2))
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(engine.coverage > 0.6
-                                     ? .green : .orange)
+                    .foregroundStyle(.white.opacity(0.85))
             }
         }
     }
@@ -939,6 +975,7 @@ struct ScanSummarySheet: View {
     @Environment(\.dismiss) private var dismiss
     let room: Room?
     @Binding var selectedTab: Int
+    @State private var showAIReview = false
 
     var body: some View {
         VStack(spacing: 18) {
@@ -965,6 +1002,16 @@ struct ScanSummarySheet: View {
             .padding(.vertical, 6)
 
             Button {
+                showAIReview = true
+            } label: {
+                Label("Identify what you scanned with AI",
+                      systemImage: "sparkles")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.horizontal)
+
+            Button {
                 selectedTab = 2
                 dismiss()
             } label: {
@@ -972,12 +1019,15 @@ struct ScanSummarySheet: View {
                       systemImage: "shippingbox")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .padding(.horizontal)
 
             Button("Keep scanning") { dismiss() }
                 .padding(.bottom, 10)
             Spacer(minLength: 0)
+        }
+        .sheet(isPresented: $showAIReview) {
+            NavigationStack { AIReviewView() }
         }
     }
 
@@ -1008,6 +1058,13 @@ struct LocateBar: View {
     /// doing the haptic thing even when you're not scanning").
     var active: Bool = true
     @State private var lastTick = Date.distantPast
+    /// Route-aware aim: heading toward a point ~0.75 m down an actual
+    /// walkable path, and walking distance — a straight-line arrow
+    /// "just points you into a wall" (field test 3). Straight line is
+    /// only the fallback when no route exists yet.
+    @State private var routeHint: (heading: Double,
+                                   distance: Double)?
+    @State private var lastPlanAt = Date.distantPast
     private static let haptic = UIImpactFeedbackGenerator(style: .light)
 
     var body: some View {
@@ -1016,9 +1073,10 @@ struct LocateBar: View {
         }
         let dx = target.x - engine.pose.x
         let dy = target.y - engine.pose.y
-        let distance = (dx * dx + dy * dy).squareRoot()
-        let bearing = atan2(dy, dx)
-        let rel = wrapAngle(bearing - engine.pose.heading)
+        let straight = (dx * dx + dy * dy).squareRoot()
+        let distance = routeHint?.distance ?? straight
+        let aim = routeHint?.heading ?? atan2(dy, dx)
+        let rel = wrapAngle(aim - engine.pose.heading)
 
         return AnyView(
             HStack(spacing: 12) {
@@ -1063,6 +1121,13 @@ struct LocateBar: View {
                         in: RoundedRectangle(cornerRadius: 14))
             .onChange(of: engine.pose.x) { _, _ in
                 tick(distance: distance)
+                // replan the aim at most once a second — cheap A*
+                if active,
+                   Date().timeIntervalSince(lastPlanAt) > 1.0 {
+                    lastPlanAt = Date()
+                    routeHint = engine.locateHint(
+                        to: Vec(target.x, target.y))
+                }
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(

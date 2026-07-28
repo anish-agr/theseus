@@ -56,6 +56,14 @@ struct ThingsView: View {
             .navigationTitle("Stuff")
             .searchable(text: $query, prompt: "Search everything you own")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        AIReviewView()
+                    } label: {
+                        Image(systemName: "sparkles")
+                    }
+                    .accessibilityLabel("Identify items with AI")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Picker("Filter", selection: $filter) {
                         ForEach(Filter.allCases, id: \.self) {

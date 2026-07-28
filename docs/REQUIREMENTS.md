@@ -83,8 +83,12 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
   existing thing don't offer it — undoing history is worse than an
   extra sighting.
 - **FR-2.12** 🧪 Generic classifier labels (materials like "textile",
-  scene words, abstractions) SHALL never become an object's name —
-  fall through the naming cascade instead.
+  scene words, vague parents like "clothing"/"container") SHALL never
+  become an object's name — fall through the naming cascade instead.
+- **FR-2.13** 🧪 A live **lock-on frame** (brand blue) SHALL show
+  exactly what a capture would save; the dwell only arms while a
+  subject is framed — never on walls or things off to the side. The
+  scan progress readout is square metres, not a percentage.
 
 ## FR-3 Inventory & search
 
@@ -177,6 +181,14 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
 - **FR-8.3** 🧪 AI actions: itemize a storage photo (FR-9.3), estimate
   replacement value (FR-10.4), identify an unknown object (FR-12.3).
   Every AI-derived value is labelled "AI estimate" and user-editable.
+- **FR-8.5** 🧪 **Batch identification is the primary mode** (field
+  test 3): scan fast, then one screen (Stuff → ✨, or straight from
+  the scan summary) sends the un-identified items' photos in batches
+  and applies specific names, searchable descriptions and values in
+  one pass. Live per-capture naming is the opt-in toggle.
+- **FR-8.6** 🧪 Gemini model ids are never trusted to live forever:
+  404 triggers list-and-retry (FR-8.1) and Settings can list the
+  key's usable models and pick one.
 - **FR-8.4** 🧪 Without a key, every AI entry point degrades to its
   on-device equivalent or explains, in one line, what a free key adds.
 

@@ -117,7 +117,22 @@ final class NavEngine: ObservableObject {
 
     // ---- observations ----------------------------------------------------
 
+    private var lastPoseAt = Date.distantPast
+
+    /// ARKit calls this at camera frame rate, but PUBLISHING at 60 Hz
+    /// re-renders every observing view 60×/s — field test 3's "after a
+    /// few seconds everything gets choppy". Publish only on meaningful
+    /// change (2 cm / ~1°) or a 250 ms heartbeat; internal consumers
+    /// tick at 5 Hz and never notice.
     func updatePose(x: Double, y: Double, heading: Double) {
+        let moved = ((x - pose.x) * (x - pose.x)
+            + (y - pose.y) * (y - pose.y)).squareRoot()
+        let turned = abs(wrapAngle(heading - pose.heading))
+        guard moved > 0.02 || turned > 0.02
+            || Date().timeIntervalSince(lastPoseAt) > 0.25 else {
+            return
+        }
+        lastPoseAt = Date()
         pose = (x, y, heading)
     }
 
@@ -282,6 +297,24 @@ final class NavEngine: ObservableObject {
     var routeRemainingM: Double? {
         guard isGuiding, !smoothedPath.isEmpty else { return nil }
         return polylineLength([Vec(pose.x, pose.y)] + smoothedPath)
+    }
+
+    /// Wall-aware locate: when a route to the target exists, aim the
+    /// arrow along it (a point ~0.75 m down the path) and report the
+    /// walking distance — a straight-line arrow "just points you into
+    /// a wall" (field test 3). Falls back to nil = use straight line.
+    func locateHint(to target: Vec)
+        -> (heading: Double, distanceM: Double)? {
+        let start = grid.worldToCell(Vec(pose.x, pose.y))
+        guard let res = plan(grid: grid, start: start,
+                             goal: grid.worldToCell(target),
+                             params: params) else { return nil }
+        let sm = smooth(grid: grid, cells: res.cells, params: params)
+        guard sm.count >= 2 else { return nil }
+        let aim = pointAlong(sm, startI: 0, startT: 0, ahead: 0.75)
+        let h = bearing(from: Vec(pose.x, pose.y), to: aim)
+        let d = polylineLength([Vec(pose.x, pose.y)] + sm)
+        return (h, d)
     }
 
     // ---- space queries ---------------------------------------------------

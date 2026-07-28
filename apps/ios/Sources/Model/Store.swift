@@ -48,13 +48,20 @@ enum Store {
     static func saveWorldMap(_ map: ARWorldMap, roomID: UUID) throws {
         let data = try NSKeyedArchiver.archivedData(withRootObject: map,
                                                     requiringSecureCoding: true)
-        try data.write(to: worldMapURL(roomID), options: .atomic)
+        // ARWorldMaps are the bulk of on-disk size (10-15 MB each raw);
+        // LZFSE roughly halves them for a few ms of work
+        let out = (try? (data as NSData).compressed(
+            using: .lzfse) as Data) ?? data
+        try out.write(to: worldMapURL(roomID), options: .atomic)
     }
 
     static func loadWorldMap(_ roomID: UUID) -> ARWorldMap? {
-        guard let data = try? Data(contentsOf: worldMapURL(roomID)) else {
+        guard let raw = try? Data(contentsOf: worldMapURL(roomID)) else {
             return nil
         }
+        // old installs saved uncompressed maps — fall back on failure
+        let data = (try? (raw as NSData).decompressed(
+            using: .lzfse) as Data) ?? raw
         return try? NSKeyedUnarchiver.unarchivedObject(
             ofClass: ARWorldMap.self, from: data)
     }
@@ -159,15 +166,37 @@ enum Store {
         thingsDir().appendingPathComponent("\(thingID.uuidString).jpg")
     }
 
+    private static let thumbCache = NSCache<NSUUID, UIImage>()
+
     static func saveThumb(_ image: UIImage, thingID: UUID) {
-        guard let data = image.jpegData(compressionQuality: 0.8) else {
+        // 512 px is plenty for cards, reports and the AI; full-res
+        // crops were a silent disk (and scroll-decode) hog
+        let maxSide: CGFloat = 512
+        var out = image
+        let side = max(image.size.width, image.size.height)
+        if side > maxSide {
+            let scale = maxSide / side
+            let size = CGSize(width: image.size.width * scale,
+                              height: image.size.height * scale)
+            out = UIGraphicsImageRenderer(size: size).image { _ in
+                image.draw(in: CGRect(origin: .zero, size: size))
+            }
+        }
+        guard let data = out.jpegData(compressionQuality: 0.75) else {
             return
         }
         try? data.write(to: thumbURL(thingID), options: .atomic)
+        thumbCache.setObject(out, forKey: thingID as NSUUID)
     }
 
     static func loadThumb(_ thingID: UUID) -> UIImage? {
-        UIImage(contentsOfFile: thumbURL(thingID).path)
+        if let cached = thumbCache.object(forKey: thingID as NSUUID) {
+            return cached
+        }
+        guard let image = UIImage(
+            contentsOfFile: thumbURL(thingID).path) else { return nil }
+        thumbCache.setObject(image, forKey: thingID as NSUUID)
+        return image
     }
 
     // ---- receipts --------------------------------------------------------
@@ -256,6 +285,7 @@ enum Store {
     }
 
     static func deleteThingBlobs(_ thingID: UUID) {
+        thumbCache.removeObject(forKey: thingID as NSUUID)
         try? FileManager.default.removeItem(at: thumbURL(thingID))
         try? FileManager.default.removeItem(at: receiptURL(thingID))
         SpotlightIndex.remove(thingID)
@@ -265,6 +295,30 @@ enum Store {
     /// caller separately empties the SwiftData store.
     static func deleteAllBlobs() {
         try? FileManager.default.removeItem(at: root)
+    }
+
+    /// Where the space actually goes — the honest answer to "why is
+    /// this 32 MB". (Room maps are ARWorldMaps; they dominate.)
+    static func bytesBreakdown() -> [(label: String, bytes: Int64)] {
+        func dirBytes(_ url: URL) -> Int64 {
+            guard let e = FileManager.default.enumerator(
+                at: url, includingPropertiesForKeys: [.fileSizeKey])
+            else { return 0 }
+            var total: Int64 = 0
+            for case let f as URL in e {
+                total += Int64((try? f.resourceValues(
+                    forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+            }
+            return total
+        }
+        return [
+            ("Room maps & grids",
+             dirBytes(root.appendingPathComponent("rooms"))),
+            ("Item photos & receipts", dirBytes(thingsDir())),
+            ("Condition records",
+             dirBytes(root.appendingPathComponent("condition"))),
+            ("Diagnostic traces", dirBytes(tracesDir())),
+        ]
     }
 
     static func totalBytes() -> Int64 {

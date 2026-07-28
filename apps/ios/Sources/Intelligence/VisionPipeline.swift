@@ -52,6 +52,12 @@ enum VisionPipeline {
         "pattern", "texture", "design", "art", "still_life",
         "darkness", "blur", "macro", "abstract", "shape", "line",
         "circle", "rectangle", "object", "item", "thing", "product",
+        // taxonomy parents so vague they insult the user ("clothing",
+        // "container" — field test 3)
+        "clothing", "apparel", "container", "cord", "cable",
+        "appliance", "device", "equipment", "machine", "tool",
+        "furniture", "accessory", "decoration", "utensil",
+        "instrument", "hardware", "electronics", "footwear",
     ]
 
     /// Find the subject the user is pointing at: the salient region
@@ -84,6 +90,39 @@ enum VisionPipeline {
         // saliency boxes hug tightly; pad a little so the crop reads well
         box = box.insetBy(dx: -box.width * 0.06, dy: -box.height * 0.06)
         return box.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
+    /// Like subjectBox but honest about failure: nil when saliency
+    /// found no object near the reticle — used to draw the live
+    /// lock-on frame and to keep the dwell from arming on blank walls
+    /// or things off to the side.
+    static func subjectBoxStrict(pixelBuffer: CVPixelBuffer) -> CGRect? {
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
+                                            orientation: .up)
+        let request = VNGenerateAttentionBasedSaliencyImageRequest()
+        do {
+            try handler.perform([request])
+        } catch {
+            return nil
+        }
+        guard let obs = request.results?.first
+                as? VNSaliencyImageObservation,
+              let objects = obs.salientObjects, !objects.isEmpty else {
+            return nil
+        }
+        let centre = CGPoint(x: 0.5, y: 0.5)
+        // must contain — or very nearly contain — the reticle: that
+        // is the whole point of a lock-on frame
+        let best = objects.min { a, b in
+            hypot(a.boundingBox.midX - 0.5, a.boundingBox.midY - 0.5)
+                < hypot(b.boundingBox.midX - 0.5,
+                        b.boundingBox.midY - 0.5)
+        }
+        guard let box = best?.boundingBox,
+              box.insetBy(dx: -0.06, dy: -0.06).contains(centre) else {
+            return nil
+        }
+        return box
     }
 
     /// Classify / read / fingerprint the cropped subject.

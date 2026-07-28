@@ -12,6 +12,7 @@ import ARKit
 import Combine
 import Foundation
 import NavCore
+import UIKit
 
 @MainActor
 final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
@@ -23,6 +24,17 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
     @Published var floorFound = false
     /// Set when a dwell completes; ScanView consumes it.
     @Published var pendingCapture: CapturedObject?
+    /// The lock-on frame: screen-space rect of the object the camera
+    /// is actually looking at (saliency, ~5 Hz), nil when there isn't
+    /// one. The dwell only arms while this is fresh — that is what
+    /// stops captures of walls and things off to the side.
+    @Published var subjectBox: CGRect?
+    private var subjectAt = Date.distantPast
+    private var saliencyBusy = false
+
+    var subjectFresh: Bool {
+        subjectBox != nil && Date().timeIntervalSince(subjectAt) < 0.9
+    }
 
     private(set) var floorY: Float = 0
     private(set) var session: ARSession?
@@ -151,13 +163,58 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
                 capture.hint = ""
             }
             // dwell capture can be turned off entirely in Settings —
-            // the shutter and voice still work
+            // the shutter and voice still work. It also only arms
+            // while the lock-on frame sees an actual subject.
             let dwellOn = UserDefaults.standard
                 .object(forKey: "dwellCapture") as? Bool ?? true
-            if dwellOn, capture.updateDwell(frame: frame) {
+            if dwellOn, subjectFresh,
+               capture.updateDwell(frame: frame) {
                 fire(frame: frame, capture: capture)
-            } else if !dwellOn {
+            } else if !dwellOn || !subjectFresh {
                 capture.dwellProgress = 0
+            }
+        }
+
+        // the lock-on frame: saliency at ~5 Hz, off the main actor,
+        // offset from the ingest tick so the two never stack up
+        if frameCount % 12 == 6, floorFound, !saliencyBusy,
+           capture?.busy != true {
+            saliencyBusy = true
+            let buffer = frame.capturedImage
+            let viewport = UIScreen.main.bounds.size
+            let transform = frame.displayTransform(
+                for: .portrait, viewportSize: viewport)
+            Task.detached(priority: .utility) { [weak self] in
+                let vision = VisionPipeline.subjectBoxStrict(
+                    pixelBuffer: buffer)
+                let rect: CGRect? = vision.map { v in
+                    // Vision (origin bottom-left, y up) → ARKit image
+                    // coords (top-left) → display transform → screen
+                    let img = CGRect(x: v.minX, y: 1 - v.maxY,
+                                     width: v.width, height: v.height)
+                    let a = img.origin.applying(transform)
+                    let b = CGPoint(x: img.maxX, y: img.maxY)
+                        .applying(transform)
+                    let x0 = min(a.x, b.x) * viewport.width
+                    let y0 = min(a.y, b.y) * viewport.height
+                    let x1 = max(a.x, b.x) * viewport.width
+                    let y1 = max(a.y, b.y) * viewport.height
+                    // quantize: a jittering frame reads as noise
+                    return CGRect(x: (x0 / 6).rounded() * 6,
+                                  y: (y0 / 6).rounded() * 6,
+                                  width: ((x1 - x0) / 6).rounded() * 6,
+                                  height: ((y1 - y0) / 6).rounded() * 6)
+                }
+                await MainActor.run {
+                    guard let self else { return }
+                    self.saliencyBusy = false
+                    if let rect {
+                        self.subjectBox = rect
+                        self.subjectAt = Date()
+                    } else {
+                        self.subjectBox = nil
+                    }
+                }
             }
         }
 
