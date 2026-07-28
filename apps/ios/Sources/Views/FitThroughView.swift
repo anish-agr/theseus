@@ -58,12 +58,18 @@ struct FitThroughView: View {
                 }
                 if let result {
                     Section("Verdict") {
-                        Label(result.ok ? "It fits" : "It will not fit",
-                              systemImage: result.ok
-                              ? "checkmark.circle.fill"
-                              : "xmark.octagon.fill")
-                            .foregroundStyle(result.ok ? .green : .red)
-                            .font(.headline)
+                        // success is the warm dot, never a checkmark
+                        HStack(spacing: 10) {
+                            if result.ok {
+                                SuccessDot(size: 16)
+                            } else {
+                                Image(systemName: "xmark.octagon.fill")
+                                    .foregroundStyle(.red)
+                            }
+                            Text(result.ok
+                                 ? "It fits" : "It will not fit")
+                        }
+                        .font(.headline)
                         LabeledContent(
                             "Narrowest point",
                             value: String(format: "%.2f m",

@@ -570,9 +570,13 @@ struct ScanView: View {
     private var coverageBadge: some View {
         Group {
             if engine.scanComplete {
-                Label("Complete", systemImage: "checkmark.circle.fill")
-                    .font(.caption.bold())
-                    .foregroundStyle(.green)
+                HStack(spacing: 5) {
+                    Circle().fill(Color.brandDot)
+                        .frame(width: 9, height: 9)
+                    Text("Complete")
+                }
+                .font(.caption.bold())
+                .foregroundStyle(.green)
             } else {
                 Text("\(Int(min(0.99, engine.coverage) * 100))% mapped")
                     .font(.caption.monospacedDigit())
@@ -585,13 +589,16 @@ struct ScanView: View {
     private var hintBubble: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let saveNotice {
-                Label(saveNotice, systemImage: "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.green)
+                HStack(spacing: 6) {
+                    SuccessDot(size: 10)
+                    Text(saveNotice)
+                }
+                .font(.caption)
+                .foregroundStyle(.green)
             }
             Label(capture.hint.isEmpty ? engine.scanHint : capture.hint,
                   systemImage: engine.scanComplete
-                  ? "checkmark.circle" : "wand.and.rays")
+                  ? "smallcircle.filled.circle" : "wand.and.rays")
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(.white)
         }
@@ -840,7 +847,7 @@ struct ScanSummarySheet: View {
                 stat(value: "\(room?.things.count ?? 0)",
                      label: "things saved")
                 Divider().frame(height: 34)
-                stat(value: engine.scanComplete ? "✓" : "…",
+                stat(value: engine.scanComplete ? "●" : "…",
                      label: engine.scanComplete
                      ? "complete" : "keep sweeping")
             }
