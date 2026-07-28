@@ -423,6 +423,106 @@ def gen_flowfield() -> None:
     path = OUT / "FlowFieldParity.swift"
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"wrote {path}")
+    gen_solvers()
+
+
+def _partial_ops():
+    """A half-explored world for frontier tests: left side carved free,
+    a wall with a gap at the top, right side never observed."""
+    ops = []
+    for _ in range(2):
+        for y in range(10):
+            for x in range(6):
+                ops.append((x, y, False))
+    for _ in range(3):
+        for y in range(8):
+            ops.append((4, y, True))
+    return ops
+
+
+def gen_solvers() -> None:
+    """Frontier / coverage / queries parity on their natural worlds."""
+    from theseus_engine import frontier
+    from theseus_engine.coverage import coverage_fraction, coverage_route
+    from theseus_engine.queries import (corridor_profile, fits_through,
+                                        nearest_semantic)
+
+    params = PlanParams(radius=0.05, safe_margin=0.15, margin_weight=1.5)
+
+    # --- frontier on the partial world --------------------------------
+    pgrid = OccupancyGrid(12, 10, 0.05, origin=(-0.3, -0.2))
+    pgrid.clearance_cap = 1.2
+    partial = _partial_ops()
+    for x, y, occ in partial:
+        pgrid.observe((x, y), occ)
+    fcells = frontier.frontier_cells(pgrid)
+    fclusters = frontier.clusters(fcells, 3)
+    t0 = frontier.select_target(pgrid, (0, 0), params)
+    t1 = frontier.select_target(pgrid, (0, 0), params, min_dist_m=0.3)
+    assert t0 is not None and t1 is not None
+
+    def tgt(t):
+        return f"({_cell(t.cell)}, {t.cluster_size}, {lit(t.travel_cost)})"
+
+    partial_lit = ", ".join(f"({x}, {y}, {str(o).lower()})"
+                            for x, y, o in partial)
+    fcells_lit = ", ".join(_cell(c) for c in fcells)
+    fclusters_lit = ", ".join(
+        "[" + ", ".join(_cell(c) for c in comp) + "]" for comp in fclusters)
+
+    # --- coverage on the navigable world ------------------------------
+    ngrid = OccupancyGrid(12, 10, 0.05, origin=(-0.3, -0.2))
+    ngrid.clearance_cap = 1.2
+    for x, y, occ in _nav_ops():
+        ngrid.observe((x, y), occ)
+    cov = coverage_route(ngrid, (0, 0), params, lane_width=0.2)
+    assert cov is not None
+    frac = coverage_fraction(ngrid, cov.cells, params, lane_width=0.2)
+    visit_lit = ", ".join(_cell(c) for c in cov.visit_points)
+
+    # --- queries on the navigable world + labels ----------------------
+    ngrid.set_state((10, 1), 2, label="fridge")
+    ngrid.set_state((1, 8), 2, label="couch")
+    routes = []
+    for lab in ("fridge", "couch"):
+        r = nearest_semantic(ngrid, (0, 0), lab, params, approach_m=0.2)
+        assert r is not None, f"no route to {lab}"
+        cells = "[" + ", ".join(_cell(c) for c in r.cells) + "]"
+        routes.append(f"(\"{lab}\", {cells}, {lit(r.cost)})")
+    assert nearest_semantic(ngrid, (0, 0), "ghost", params) is None
+
+    pts = [(-0.25, -0.15), (0.1, 0.0), (0.25, 0.25)]
+    prof = corridor_profile(ngrid, pts)
+    prof_lit = ", ".join(f"({lit(s)}, {lit(w)})" for s, w in prof)
+    fits = []
+    for w in (0.1, 0.5):
+        ok, pinch, narrow = fits_through(ngrid, pts, w)
+        p = _vec(pinch) if pinch is not None else "Vec(-99.0, -99.0)"
+        fits.append(f"({lit(w)}, {str(ok).lower()}, {p}, {lit(narrow)})")
+    pts_lit = ", ".join(_vec(p) for p in pts)
+
+    lines = [
+        HEADER,
+        f"let partialOps: [(Int32, Int32, Bool)] = [{partial_lit}]\n",
+        f"let frontierCellsWant: [Cell] = [{fcells_lit}]\n",
+        f"let frontierClustersWant: [[Cell]] = [{fclusters_lit}]\n",
+        f"let frontierTarget0: (Cell, Int, Double) = {tgt(t0)}\n",
+        f"let frontierTargetMinDist: (Cell, Int, Double) = {tgt(t1)}\n",
+        f"let coverageVisit: [Cell] = [{visit_lit}]\n",
+        f"let coverageLanes = {cov.lanes}\n",
+        f"let coverageSkipped = {cov.skipped}\n",
+        f"let coverageCellCount = {len(cov.cells)}\n",
+        f"let coverageFrac: Double = {lit(frac)}\n",
+        "let semanticRoutes: [(String, [Cell], Double)] = ["
+        + ", ".join(routes) + "]\n",
+        f"let profilePts: [Vec] = [{pts_lit}]\n",
+        f"let profileWant: [(Double, Double)] = [{prof_lit}]\n",
+        "let fitsCases: [(Double, Bool, Vec, Double)] = ["
+        + ", ".join(fits) + "]\n",
+    ]
+    path = OUT / "SolverParity.swift"
+    path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    print(f"wrote {path}")
 
 
 if __name__ == "__main__":
