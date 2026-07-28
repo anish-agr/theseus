@@ -33,6 +33,24 @@ struct InsuranceView: View {
     var body: some View {
         List {
             Section {
+                NavigationLink {
+                    InsureWizardView()
+                } label: {
+                    HStack(spacing: 12) {
+                        ThreadLogoView()
+                            .frame(width: 34, height: 34)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Insure my home — step by step")
+                                .font(.callout.weight(.semibold))
+                            Text("Scan → identify → serials & "
+                                 + "receipts → claim PDF + backup")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            Section {
                 HStack(spacing: 0) {
                     stat(currency(total), "documented value")
                     Divider().frame(height: 34)

@@ -356,8 +356,14 @@ enum Reports {
                     row(meta, size: 9, weight: .regular,
                         color: .darkGray)
                     var flags: [String] = []
+                    if let bought = thing.purchaseDate {
+                        flags.append("bought " + bought.formatted(
+                            date: .abbreviated, time: .omitted))
+                    }
                     if Store.hasReceipt(thing.id) {
-                        flags.append("receipt on file")
+                        flags.append(thing.priceSource == "receipt"
+                                     ? "value from receipt"
+                                     : "receipt on file")
                     }
                     if let until = thing.warrantyUntil {
                         let stamp = until.formatted(
@@ -433,6 +439,81 @@ enum Reports {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("theseus-inventory.json")
         try? data.write(to: url, options: .atomic)
+        return url
+    }
+
+    // ---- move manifest ---------------------------------------------------
+
+    /// Moving day: one checklist per box — movers tick items on
+    /// arrival and nothing vanishes quietly. Pairs with the QR labels
+    /// already on the boxes.
+    static func moveManifestPDF(spots: [StorageSpot],
+                                things: [Thing]) -> URL? {
+        let page = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let margin: CGFloat = 40
+        let renderer = UIGraphicsPDFRenderer(bounds: page)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("theseus-move-manifest.pdf")
+        do {
+            try renderer.writePDF(to: url) { pdf in
+                pdf.beginPage()
+                var y = margin
+                func text(_ s: String, size: CGFloat,
+                          weight: UIFont.Weight,
+                          color: UIColor = .black,
+                          indent: CGFloat = 0) {
+                    s.draw(at: CGPoint(x: margin + indent, y: y),
+                           withAttributes: [
+                            .font: UIFont.systemFont(ofSize: size,
+                                                     weight: weight),
+                            .foregroundColor: color,
+                           ])
+                    y += size + 7
+                }
+                let boxed = things.filter { $0.storageID != nil }
+                text("Move manifest — Theseus", size: 22,
+                     weight: .bold)
+                text(Date().formatted(date: .long, time: .omitted)
+                     + " · \(spots.count) containers · "
+                     + "\(boxed.count) items packed",
+                     size: 11, weight: .regular, color: .darkGray)
+                y += 6
+                for spot in spots {
+                    let contents = things.filter {
+                        $0.storageID == spot.id
+                    }.sorted { $0.displayName < $1.displayName }
+                    guard !contents.isEmpty else { continue }
+                    if y + 40 > page.height - margin {
+                        pdf.beginPage()
+                        y = margin
+                    }
+                    text("\(spot.name) — \(contents.count) items",
+                         size: 14, weight: .semibold)
+                    for thing in contents {
+                        if y + 18 > page.height - margin {
+                            pdf.beginPage()
+                            y = margin
+                        }
+                        // the tick box the movers actually use
+                        pdf.cgContext.setStrokeColor(
+                            UIColor.darkGray.cgColor)
+                        pdf.cgContext.setLineWidth(1)
+                        pdf.cgContext.stroke(CGRect(
+                            x: margin + 8, y: y + 1,
+                            width: 11, height: 11))
+                        var line = thing.displayName
+                        if let price = thing.price {
+                            line += "  ·  " + currency(price)
+                        }
+                        text(line, size: 10, weight: .regular,
+                             color: .black, indent: 28)
+                    }
+                    y += 8
+                }
+            }
+        } catch {
+            return nil
+        }
         return url
     }
 

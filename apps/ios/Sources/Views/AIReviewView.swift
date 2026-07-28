@@ -7,6 +7,40 @@
 import SwiftData
 import SwiftUI
 
+/// Run batch identification over `targets` and write the results in:
+/// names (never over a user-typed one), categories, searchable
+/// descriptions, and values where none exist. Returns how many items
+/// were identified. Shared by AIReviewView and the insurance wizard.
+@MainActor
+@discardableResult
+func applyBatchIdentification(_ targets: [Thing],
+                              ai: AIService) async throws -> Int {
+    let items: [(id: UUID, image: UIImage)] = targets.compactMap {
+        thing in
+        Store.loadThumb(thing.id).map { (thing.id, $0) }
+    }
+    guard !items.isEmpty else { return 0 }
+    let results = try await ai.identifyBatch(items)
+    var applied = 0
+    for thing in targets {
+        guard let idn = results[thing.id] else { continue }
+        if !thing.userNamed {
+            thing.displayName = idn.name
+            thing.autoLabel = idn.name
+            thing.autoConfidence = max(thing.autoConfidence, 0.75)
+        }
+        thing.category = idn.category
+        thing.aiSummary = idn.summary
+        if thing.price == nil, let value = idn.estimatedValue {
+            thing.price = value
+            thing.priceSource = "ai"
+        }
+        SpotlightIndex.index(thing)
+        applied += 1
+    }
+    return applied
+}
+
 struct AIReviewView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \Thing.lastSeenAt, order: .reverse)
@@ -129,41 +163,20 @@ struct AIReviewView: View {
 
     private func identify() {
         let targets = candidates.filter { picked.contains($0.id) }
-        let items: [(id: UUID, image: UIImage)] = targets.compactMap {
-            thing in
-            Store.loadThumb(thing.id).map { (thing.id, $0) }
-        }
-        guard !items.isEmpty else {
-            problem = "These items have no photos to send."
-            return
-        }
+        guard !targets.isEmpty else { return }
         running = true
         problem = nil
         doneCount = nil
         Task {
             defer { running = false }
             do {
-                let results = try await ai.identifyBatch(items)
-                var applied = 0
-                for thing in targets {
-                    guard let idn = results[thing.id] else { continue }
-                    if !thing.userNamed {
-                        thing.displayName = idn.name
-                        thing.autoLabel = idn.name
-                        thing.autoConfidence = max(
-                            thing.autoConfidence, 0.75)
-                    }
-                    thing.category = idn.category
-                    thing.aiSummary = idn.summary
-                    if thing.price == nil,
-                       let value = idn.estimatedValue {
-                        thing.price = value
-                        thing.priceSource = "ai"
-                    }
-                    SpotlightIndex.index(thing)
-                    applied += 1
+                let applied = try await applyBatchIdentification(
+                    targets, ai: ai)
+                if applied == 0 {
+                    problem = "These items have no photos to send."
+                } else {
+                    doneCount = applied
                 }
-                doneCount = applied
                 picked = []
             } catch {
                 problem = error.localizedDescription

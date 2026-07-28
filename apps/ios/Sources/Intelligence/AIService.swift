@@ -170,7 +170,7 @@ final class AIService: ObservableObject {
             prompt += "\nContext that may help: \(hint)"
         }
         let text = try await visionCall(prompt: prompt, image: image,
-                                        maxTokens: 300)
+                                        maxTokens: 1000)
         guard let obj = Self.jsonObject(in: text) else {
             throw AIError.badReply(text)
         }
@@ -195,7 +195,7 @@ final class AIService: ObservableObject {
         Maximum 25 items. Skip the container itself.
         """
         let text = try await visionCall(prompt: prompt, image: image,
-                                        maxTokens: 1200)
+                                        maxTokens: 2500)
         guard let arr = Self.jsonArray(in: text) else {
             throw AIError.badReply(text)
         }
@@ -223,7 +223,7 @@ final class AIService: ObservableObject {
         "note": "short basis, one clause"}
         """
         let text = try await visionCall(prompt: prompt, image: image,
-                                        maxTokens: 200)
+                                        maxTokens: 600)
         guard let obj = Self.jsonObject(in: text),
               let value = Self.number(
                 obj["value_\(currencyCode.lowercased())"]) else {
@@ -259,7 +259,7 @@ final class AIService: ObservableObject {
             """
             let text = try await visionCall(
                 prompt: prompt,
-                images: chunk.map(\.image), maxTokens: 1600)
+                images: chunk.map(\.image), maxTokens: 4000)
             guard let arr = Self.jsonArray(in: text) else {
                 throw AIError.badReply(text)
             }
@@ -276,11 +276,13 @@ final class AIService: ObservableObject {
         return out
     }
 
-    /// Settings "Test" button: cheapest possible round-trip.
+    /// Settings "Test" button: cheapest possible round-trip. The
+    /// budget is generous on purpose — thinking models can spend
+    /// tokens before the first visible word.
     func ping() async throws {
         _ = try await visionCall(
             prompt: "Reply with exactly the word: ready",
-            image: nil, maxTokens: 10)
+            image: nil, maxTokens: 500)
     }
 
     // ---- transport -------------------------------------------------------
@@ -424,8 +426,16 @@ final class AIService: ObservableObject {
         }
         let body: [String: Any] = [
             "contents": [["parts": parts]],
-            "generationConfig": ["temperature": 0.2,
-                                 "maxOutputTokens": maxTokens],
+            // thinkingBudget 0: Gemini 2.5+/3.x are thinking models
+            // and will silently burn the WHOLE output budget on
+            // internal reasoning, returning empty content with
+            // finishReason MAX_TOKENS (field test 4's screenshot).
+            // Naming household objects needs no chain of thought.
+            "generationConfig": [
+                "temperature": 0.2,
+                "maxOutputTokens": maxTokens,
+                "thinkingConfig": ["thinkingBudget": 0],
+            ],
         ]
         var req = URLRequest(url: url)
         req.httpMethod = "POST"

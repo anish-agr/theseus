@@ -215,6 +215,8 @@ struct ThingDetailView: View {
     @State private var scanningSerial = false
     @State private var serialCandidates: [String] = []
     @State private var hasWarranty = false
+    @State private var showReceiptCamera = false
+    @State private var receiptReading: ReceiptReading?
 
     var body: some View {
         List {
@@ -268,6 +270,10 @@ struct ThingDetailView: View {
                         Text("AI estimate")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                    } else if thing.priceSource == "receipt" {
+                        Text("from receipt")
+                            .font(.caption2)
+                            .foregroundStyle(Color.brandDot)
                     }
                 }
                 if ai.isConfigured {
@@ -288,12 +294,40 @@ struct ThingDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                Button {
+                    showReceiptCamera = true
+                } label: {
+                    Label(hasReceipt
+                          ? "Re-photograph receipt"
+                          : "Photograph receipt",
+                          systemImage: "doc.viewfinder")
+                }
                 PhotosPicker(selection: $receiptPick,
                              matching: .images) {
-                    Label(hasReceipt
-                          ? "Replace receipt photo"
-                          : "Add receipt photo",
+                    Label("Receipt from photo library",
                           systemImage: "doc.text.image")
+                }
+                if let reading = receiptReading,
+                   reading.total != nil || reading.date != nil {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Read off the receipt:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(receiptSummary(reading))
+                                .font(.callout.weight(.medium))
+                        }
+                        Spacer()
+                        Button("Use") { applyReceipt(reading) }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    }
+                }
+                if let bought = thing.purchaseDate {
+                    LabeledContent("Bought") {
+                        Text(bought.formatted(date: .abbreviated,
+                                              time: .omitted))
+                    }
                 }
                 if hasReceipt,
                    let receipt = Store.loadReceipt(thing.id) {
@@ -446,7 +480,19 @@ struct ThingDetailView: View {
                     type: Data.self) {
                     Store.saveReceipt(data, thingID: thing.id)
                     hasReceipt = true
+                    if let image = UIImage(data: data) {
+                        readReceipt(image)
+                    }
                 }
+            }
+        }
+        .sheet(isPresented: $showReceiptCamera) {
+            CameraSheet { image in
+                if let data = image.jpegData(compressionQuality: 0.85) {
+                    Store.saveReceipt(data, thingID: thing.id)
+                    hasReceipt = true
+                }
+                readReceipt(image)
             }
         }
         .alert("Rename", isPresented: $renaming) {
@@ -467,6 +513,39 @@ struct ThingDetailView: View {
         let cleaned = priceDraft.replacingOccurrences(of: ",", with: ".")
         thing.price = Double(cleaned)
         thing.priceSource = ""     // a typed value is the user's own
+    }
+
+    private func readReceipt(_ image: UIImage) {
+        Task.detached(priority: .userInitiated) {
+            let reading = ReceiptReader.read(image)
+            await MainActor.run { receiptReading = reading }
+        }
+    }
+
+    private func receiptSummary(_ reading: ReceiptReading) -> String {
+        var parts: [String] = []
+        if let total = reading.total {
+            parts.append(total.formatted(.currency(
+                code: Locale.current.currency?.identifier ?? "USD")))
+        }
+        if let date = reading.date {
+            parts.append(date.formatted(date: .abbreviated,
+                                        time: .omitted))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func applyReceipt(_ reading: ReceiptReading) {
+        if let total = reading.total {
+            thing.price = total
+            thing.priceSource = "receipt"
+            priceDraft = total == total.rounded()
+                ? String(Int(total)) : String(total)
+        }
+        if let date = reading.date {
+            thing.purchaseDate = date
+        }
+        receiptReading = nil
     }
 
     private func estimateValue() {

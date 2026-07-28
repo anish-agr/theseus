@@ -137,8 +137,13 @@ final class Thing {
     // value tracking (optional — powers the insurance report totals).
     // The receipt photo itself is a blob (Store.receiptURL).
     var price: Double?
-    /// Where the value came from: "" (user-typed) or "ai" (estimated).
+    /// Where the value came from: "" (user-typed), "ai" (estimated),
+    /// or "receipt" (read off the receipt photo — documented, the
+    /// strongest provenance).
     var priceSource: String = ""
+    /// From the receipt when it could be read — turns "worth about"
+    /// into "bought on".
+    var purchaseDate: Date?
 
     // insurance dossier (all optional, all additive migrations)
     var serialNumber: String?

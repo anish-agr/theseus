@@ -256,6 +256,28 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
   view: the floor plan with green dots (added), red rings (missing),
   and orange was→is arrows (moved) drawn on it.
 
+## FR-13 The finish line (v1.0)
+
+- **FR-13.1** 🧪 A guided **"insure my home" wizard** (Insurance →
+  step by step): scan status → one-tap batch identification → the ten
+  most valuable items missing serial/receipt → claim PDF + backup.
+- **FR-13.2** 🧪 **Off-device backup**: one .zip with every photo,
+  receipt, map, condition record and a self-describing
+  database.json. Store-method zip, opens anywhere. (An inventory
+  that dies with the phone proves nothing.)
+- **FR-13.3** 🧪 **Receipt OCR**, on-device: photographing/picking a
+  receipt reads the total and purchase date and offers them;
+  accepted values carry "from receipt" provenance and the purchase
+  date appears on the claim PDF.
+- **FR-13.4** 🧪 **Move manifest**: a tickable per-box checklist PDF
+  from the storage spots — pairs with the QR labels.
+- **FR-13.5** 🧪 **Household snapshot**: read-only .zip (insurance
+  PDF, room reports, floor plans, inventory JSON) shareable with a
+  partner/landlord; opens without the app.
+- **FR-13.6** 🧪 Gemini calls send thinkingBudget 0 — thinking models
+  otherwise burn the whole output budget on reasoning and return
+  empty content (MAX_TOKENS, field test 4).
+
 ## NFR (non-functional)
 
 - **NFR-1** ✅ All core function on-device and offline. Network is
