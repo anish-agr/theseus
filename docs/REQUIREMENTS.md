@@ -18,11 +18,22 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
 - **FR-1.3** ✅ Unknown space SHALL be untraversable for guidance;
   mapping-mode planning MAY opt in.
 - **FR-1.4** 🧪 Sparse obstacle evidence SHALL pass a persistence
-  filter (≥3 hits in 12 ingest frames) before becoming occupied.
+  filter before becoming occupied: ≥3 hits in 12 ingest frames,
+  relaxed to ≥2 when the point cloud is sparse (<60 banded points) —
+  the strict gate under-detected obstacles in the first field test.
 - **FR-1.5** 🧪 On LiDAR hardware the app SHALL use dense scene-mesh
   reconstruction automatically; mesh evidence bypasses FR-1.4.
-- **FR-1.6** 🧪 The scanner SHALL show live coverage (% of reachable
-  floor) and direct the user toward unmapped frontier.
+- **FR-1.6** 🧪 The scanner SHALL show live coverage and direct the
+  user toward unmapped frontier. **Completion is a state, not a
+  percentage**: the room is "Complete" when the frontier solver finds
+  nothing reachable left, because a raw fraction stalls around 70-80%
+  forever (frontier under furniture) and reads as failure.
+- **FR-1.9** 🧪 Elevated horizontal planes (0.15-1.8 m above the
+  floor: tabletops, seats, shelves) SHALL be obstacles. Field test
+  found them invisible — neither walkable nor blocking.
+- **FR-1.10** 🧪 First launch of the scanner SHALL teach the moves
+  (sweep floor, walk edges, tilt over furniture, dwell to save);
+  re-openable from the ? button.
 - **FR-1.7** 🧪 A room's map SHALL persist (grid + ARWorldMap) and
   reload when the room is reopened, relocalizing automatically.
 - **FR-1.8** ✅ Only the true floor plane carves walkable space; other
@@ -54,6 +65,12 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
   merging, because a wrong name is cheap and a wrong merge is not.
 - **FR-2.8** ✅ Every observation SHALL append a Sighting (when +
   where + moved-flag) — the object's history.
+- **FR-2.9** 🧪 A capture SHALL NOT be discarded because size or depth
+  could not be measured — the photo and name are the product; size is
+  a bonus recorded as "unknown". (First field test: the dwell ring
+  completed, the spinner ran, and nothing happened. Never again.)
+- **FR-2.10** 🧪 A manual shutter button SHALL back up the dwell for
+  one-handed / awkward-angle captures.
 
 ## FR-3 Inventory & search
 
@@ -70,15 +87,28 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
 - **FR-3.5** 📋 Natural-language description search ("blue ceramic
   mug") via optional on-demand CLIP model; UI hides semantic search
   until the model is installed.
-- **FR-3.6** 📋 Export a room or home as JSON + photos (insurance /
-  moving).
+- **FR-3.6** 🧪 Export the whole inventory as JSON; export any room as
+  a **report PDF** (photos, sizes, values, floor plan) — the
+  insurance/moving document.
+- **FR-3.7** 🧪 Every thing SHALL be indexed in iOS Spotlight: typing
+  "keys" in the iPhone's own search opens the app straight into
+  locating them. A Shortcuts/Siri phrase opens search.
+- **FR-3.8** 🧪 A thing MAY carry a value and a receipt photo; Home
+  and reports show totals. (AI value estimation: future.)
 
 ## FR-4 Finding & guidance
 
-- **FR-4.1** ✅ "Take me there" from any thing SHALL plan an optimal
-  route on the canonical cost model and guide with full-screen arrow,
-  distance, voice (phone speaker — no headphones required) and
-  haptics whose intensity rises as the corridor narrows.
+- **FR-4.1** ✅ Turn-by-turn guidance SHALL plan an optimal route on
+  the canonical cost model and guide with full-screen arrow, distance,
+  haptics whose intensity rises as the corridor narrows, and voice
+  (phone speaker) that is **muted until explicitly unmuted**.
+- **FR-4.7** 🧪 The DEFAULT find experience is **locate-in-camera**:
+  the item's pin becomes a green beacon in AR, a bar tracks live
+  distance + direction arrow, haptic ticks quicken as you close in
+  (geiger-counter). Turn-by-turn is one tap away from there.
+- **FR-4.8** 🧪 A route that cannot exist yet SHALL surface as a toast
+  ("scan the floor between you and it"), never as an empty full-screen
+  guidance takeover.
 - **FR-4.2** ✅ World changes SHALL reroute incrementally (D* Lite) in
   milliseconds, not via full replans.
 - **FR-4.3** ✅ Off-route SHALL turn the screen red, say "stop", and
