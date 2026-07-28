@@ -170,6 +170,25 @@ enum Store {
         UIImage(contentsOfFile: thumbURL(thingID).path)
     }
 
+    // ---- receipts --------------------------------------------------------
+
+    static func receiptURL(_ thingID: UUID) -> URL {
+        thingsDir().appendingPathComponent(
+            "\(thingID.uuidString)-receipt.jpg")
+    }
+
+    static func saveReceipt(_ data: Data, thingID: UUID) {
+        try? data.write(to: receiptURL(thingID), options: .atomic)
+    }
+
+    static func loadReceipt(_ thingID: UUID) -> UIImage? {
+        UIImage(contentsOfFile: receiptURL(thingID).path)
+    }
+
+    static func hasReceipt(_ thingID: UUID) -> Bool {
+        FileManager.default.fileExists(atPath: receiptURL(thingID).path)
+    }
+
     // ---- traces ----------------------------------------------------------
 
     static func saveTrace(_ jsonl: String, sessionID: UUID) -> URL? {
@@ -187,6 +206,8 @@ enum Store {
 
     static func deleteThingBlobs(_ thingID: UUID) {
         try? FileManager.default.removeItem(at: thumbURL(thingID))
+        try? FileManager.default.removeItem(at: receiptURL(thingID))
+        SpotlightIndex.remove(thingID)
     }
 
     /// Settings → "Delete everything". Removes the whole blob tree; the

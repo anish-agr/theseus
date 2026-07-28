@@ -128,6 +128,10 @@ final class Thing {
     var lastSeenAt: Date = Date()
     var isMissing: Bool = false
 
+    // value tracking (optional — powers the insurance report totals).
+    // The receipt photo itself is a blob (Store.receiptURL).
+    var price: Double?
+
     var room: Room?
 
     @Relationship(deleteRule: .cascade, inverse: \Sighting.thing)

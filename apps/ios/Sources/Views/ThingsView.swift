@@ -2,6 +2,7 @@
 // Search matches your own names first, then the classifier's label,
 // then any text read off the object — so "NESCAFÉ" finds the jar.
 import NavCore
+import PhotosUI
 import SwiftData
 import SwiftUI
 
@@ -34,10 +35,18 @@ struct ThingsView: View {
                     } label: {
                         ThingRow(thing: thing, showRoom: true)
                     }
+                    .swipeActions(edge: .leading) {
+                        Button {
+                            locate(thing)
+                        } label: {
+                            Label("Find", systemImage: "location.fill")
+                        }
+                        .tint(.green)
+                    }
                 }
                 .onDelete(perform: delete)
             }
-            .navigationTitle("Things")
+            .navigationTitle("Stuff")
             .searchable(text: $query, prompt: "Search everything you own")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -95,6 +104,18 @@ struct ThingsView: View {
             Store.deleteThingBlobs(thing.id)
             context.delete(thing)
         }
+    }
+
+    @EnvironmentObject private var engine: NavEngine
+
+    private func locate(_ thing: Thing) {
+        guard let room = thing.room else { return }
+        activeRoom = room
+        engine.makeActive(room)
+        engine.locateTarget = LocateTarget(
+            thingID: thing.id, name: thing.displayName,
+            x: thing.positionX, y: thing.positionY)
+        selectedTab = 1
     }
 }
 
@@ -161,6 +182,9 @@ struct ThingDetailView: View {
     @Binding var selectedTab: Int
     @State private var renaming = false
     @State private var draft = ""
+    @State private var priceDraft = ""
+    @State private var receiptPick: PhotosPickerItem?
+    @State private var hasReceipt = false
 
     var body: some View {
         List {
@@ -202,21 +226,45 @@ struct ThingDetailView: View {
                                    value: thing.autoLabel)
                 }
             }
+            Section("Value") {
+                HStack {
+                    Text(Locale.current.currencySymbol ?? "$")
+                        .foregroundStyle(.secondary)
+                    TextField("What it's worth", text: $priceDraft)
+                        .keyboardType(.decimalPad)
+                        .onSubmit(savePrice)
+                        .onChange(of: priceDraft) { _, _ in savePrice() }
+                }
+                PhotosPicker(selection: $receiptPick,
+                             matching: .images) {
+                    Label(hasReceipt
+                          ? "Replace receipt photo"
+                          : "Add receipt photo",
+                          systemImage: "doc.text.image")
+                }
+                if hasReceipt,
+                   let receipt = Store.loadReceipt(thing.id) {
+                    Image(uiImage: receipt)
+                        .resizable().scaledToFit()
+                        .frame(maxHeight: 180)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
             Section {
                 Button {
+                    // camera + green beacon + live distance — the
+                    // default "find" (turn-by-turn stays one tap away
+                    // on the locate bar)
                     guard let room = thing.room else { return }
-                    // make that room's map active BEFORE routing —
-                    // otherwise guidance runs on whichever grid was
-                    // loaded last (or an empty one)
                     activeRoom = room
                     engine.makeActive(room)
-                    engine.startGuidance(
-                        to: Vec(thing.positionX, thing.positionY),
-                        name: thing.displayName)
+                    engine.locateTarget = LocateTarget(
+                        thingID: thing.id, name: thing.displayName,
+                        x: thing.positionX, y: thing.positionY)
                     selectedTab = 1
                     dismiss()
                 } label: {
-                    Label("Take me there", systemImage: "figure.walk")
+                    Label("Find it", systemImage: "location.fill")
                 }
                 Button {
                     draft = thing.displayName
@@ -252,6 +300,23 @@ struct ThingDetailView: View {
         }
         .navigationTitle(thing.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if let price = thing.price {
+                priceDraft = price == price.rounded()
+                    ? String(Int(price)) : String(price)
+            }
+            hasReceipt = Store.hasReceipt(thing.id)
+        }
+        .onChange(of: receiptPick) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(
+                    type: Data.self) {
+                    Store.saveReceipt(data, thingID: thing.id)
+                    hasReceipt = true
+                }
+            }
+        }
         .alert("Rename", isPresented: $renaming) {
             TextField("Name", text: $draft)
             Button("Save") {
@@ -259,9 +324,15 @@ struct ThingDetailView: View {
                 if !trimmed.isEmpty {
                     thing.displayName = trimmed
                     thing.userNamed = true
+                    SpotlightIndex.index(thing)
                 }
             }
             Button("Cancel", role: .cancel) {}
         }
+    }
+
+    private func savePrice() {
+        let cleaned = priceDraft.replacingOccurrences(of: ",", with: ".")
+        thing.price = Double(cleaned)
     }
 }
