@@ -34,6 +34,19 @@ machine is actually at fault:
 powershell -File tools/diagnose/anisette.ps1
 ```
 
+**If it reports the bundle missing or incomplete**, Sideloadly's own
+download died part-way — it fetches the DLLs from `sideloadly.io` and
+its retry does not reliably resume. Finish it in one shot:
+
+```bash
+powershell -File tools/sideloadly/fix-anisette.ps1
+```
+
+That picks the bundle matching your Sideloadly's bitness (a 64-bit app
+cannot load 32-bit DLLs — switching builds without clearing `an\` leaves
+exactly that mismatch), closes the app to release file locks, extracts,
+and verifies `iTunesCore.dll` is present and the right architecture.
+
 It loads every DLL Sideloadly needs, in a 32-bit process, in the same
 search order, and reports the first that fails. It also checks the VC++
 runtimes, stray Apple installs, PATH pollution, and whether the daemon

@@ -6,20 +6,10 @@
 #   powershell -File tools/diagnose/anisette.ps1
 #
 # Anisette is the Apple-ID authentication Sideloadly performs by loading
-# Apple's iTunes DLLs. Those DLLs are 32-bit, so the interesting test
-# has to run in a 32-bit process; this script re-launches itself into
-# one if needed.
+# Apple's iTunes DLLs. They must match the app's bitness, so the load
+# test has to run in a process of the same architecture; this script
+# works out which and re-launches itself if needed.
 $ErrorActionPreference = 'Stop'
-
-if ([IntPtr]::Size -eq 8) {
-    $wow = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
-    if (Test-Path $wow) {
-        & $wow -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath
-        exit $LASTEXITCODE
-    }
-    Write-Host "No 32-bit PowerShell found; DLL checks will be skipped." `
-        -ForegroundColor Yellow
-}
 
 $root = "$env:LOCALAPPDATA\Sideloadly"
 $an = "$root\an"
@@ -28,28 +18,83 @@ $verdicts = @()
 
 function Section($t) { Write-Host "`n== $t ==" -ForegroundColor Cyan }
 
-# ---- 1. is Sideloadly even installed -----------------------------------
-Section "Sideloadly install"
-if (-not (Test-Path $an)) {
-    Write-Host "  no anisette folder at $an"
-    Write-Host "  Sideloadly has never downloaded the DLLs. Launch it and"
-    Write-Host "  accept the download prompt."
+function Get-PEArch($path) {
+    $fs = [IO.File]::OpenRead($path)
+    $br = New-Object IO.BinaryReader($fs)
+    $fs.Seek(0x3C, 'Begin') | Out-Null
+    $peOff = $br.ReadInt32()
+    $fs.Seek($peOff + 4, 'Begin') | Out-Null
+    $machine = $br.ReadUInt16()
+    $br.Close(); $fs.Close()
+    switch ($machine) { 0x014c { 'x86' } 0x8664 { 'x64' } default { 'unknown' } }
+}
+
+# ---- 0. is there anything to test at all -------------------------------
+if (-not (Test-Path "$root\sideloadly.exe")) {
+    Write-Host "Sideloadly is not installed at $root" -ForegroundColor Red
     exit 1
 }
+$exeArch = Get-PEArch "$root\sideloadly.exe"
+$core = Join-Path $an 'iTunesCore.dll'
+$dllArch = if (Test-Path $core) { Get-PEArch $core } else { $null }
+
+if (-not $dllArch) {
+    $n = @(Get-ChildItem $an -Filter *.dll -ErrorAction SilentlyContinue).Count
+    Write-Host "`nThe anisette bundle is missing or incomplete " `
+        -ForegroundColor Red -NoNewline
+    Write-Host "($n DLLs, no iTunesCore.dll)." -ForegroundColor Red
+    Write-Host "Sideloadly's own download did not finish. Run:"
+    Write-Host "  powershell -File tools/sideloadly/fix-anisette.ps1"
+    exit 1
+}
+
+# A 64-bit process cannot load 32-bit DLLs and vice versa; this mismatch
+# is a real failure mode, usually left behind by switching builds.
+if ($exeArch -ne $dllArch) {
+    Write-Host "`nSideloadly is $exeArch but its anisette DLLs are $dllArch." `
+        -ForegroundColor Red
+    Write-Host "They can never load. Delete $an and run:"
+    Write-Host "  powershell -File tools/sideloadly/fix-anisette.ps1"
+    exit 1
+}
+
+# Re-launch into a host matching the DLLs so LoadLibrary is meaningful.
+$hostArch = if ([IntPtr]::Size -eq 8) { 'x64' } else { 'x86' }
+if ($hostArch -ne $dllArch) {
+    if ($dllArch -eq 'x86') {
+        $wow = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+        if (Test-Path $wow) {
+            & $wow -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath
+            exit $LASTEXITCODE
+        }
+    } else {
+        $native = "$env:WINDIR\sysnative\WindowsPowerShell\v1.0\powershell.exe"
+        if (Test-Path $native) {
+            & $native -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath
+            exit $LASTEXITCODE
+        }
+    }
+    Write-Host "Cannot start a $dllArch PowerShell; skipping the load test." `
+        -ForegroundColor Yellow
+}
+
+# ---- 1. the install ----------------------------------------------------
+Section "Sideloadly install"
 Get-ChildItem $root -Filter *.exe -Force | ForEach-Object {
     "  {0,-24} built {1}" -f $_.Name, $_.LastWriteTime.ToString('yyyy-MM-dd')
 }
-$exe = Get-Item "$root\sideloadly.exe" -ErrorAction SilentlyContinue
-if ($exe -and $exe.LastWriteTime -lt (Get-Date).AddMonths(-6)) {
+"  architecture: $exeArch (anisette DLLs: $dllArch)"
+$exe = Get-Item "$root\sideloadly.exe"
+if ($exe.LastWriteTime -lt (Get-Date).AddMonths(-6)) {
     $problems += ("Sideloadly binary is from {0}. Apple moves its auth " +
-        "endpoints; a stale build is the most common cause of " +
+        "endpoints; a stale build is a common cause of " +
         "'Login failed: 404'.") -f $exe.LastWriteTime.ToString('MMMM yyyy')
 }
 
 # ---- 2. the DLLs themselves --------------------------------------------
-Section "Anisette DLL load test (32-bit)"
-if ([IntPtr]::Size -ne 4) {
-    Write-Host "  skipped (not running 32-bit)"
+Section "Anisette DLL load test ($dllArch)"
+if ((if ([IntPtr]::Size -eq 8) { 'x64' } else { 'x86' }) -ne $dllArch) {
+    Write-Host "  skipped (host architecture does not match)"
 } else {
     Add-Type -TypeDefinition @"
 using System;
@@ -64,8 +109,9 @@ public static class Loader {
     [Loader]::SetDllDirectoryW($an) | Out-Null
     Set-Location $an
 
-    # dependency order: the first failure is the real one, everything
-    # after it fails only as a consequence
+    # Dependency order, so the FIRST failure is the real one - everything
+    # after it fails only as a consequence. Anything the bundle does not
+    # ship is skipped rather than reported: the set varies by version.
     $order = @(
         'pthreadVC2.dll', 'zlib1.dll', 'libcache.dll', 'objc.dll',
         'libdispatch.dll', 'icudt55.dll', 'libicuuc.dll', 'libicuin.dll',
@@ -75,16 +121,14 @@ public static class Loader {
         'AVFoundationCF.dll', 'MediaAccessibility.dll', 'libxml2.dll',
         'libxslt.dll', 'libtidy.dll', 'WTF.dll', 'JavaScriptCore.dll',
         'WebKit.dll', 'CFNetwork.dll', 'ApplePushService.dll',
-        'CoreFP.dll', 'CoreADI.dll', 'iTunesCore.dll')
+        'CoreFP.dll', 'CoreADI.dll', 'AuthKitWin.dll', 'iTunesCore.dll')
 
     $failed = @()
+    $tested = 0
     foreach ($d in $order) {
         $full = Join-Path $an $d
-        if (-not (Test-Path $full)) {
-            Write-Host ("  {0,-24} MISSING" -f $d) -ForegroundColor Red
-            $failed += $d
-            continue
-        }
+        if (-not (Test-Path $full)) { continue }
+        $tested++
         # LOAD_WITH_ALTERED_SEARCH_PATH so siblings resolve from an\
         $h = [Loader]::LoadLibraryExW($full, [IntPtr]::Zero, 8)
         if ($h -eq [IntPtr]::Zero) {
@@ -96,8 +140,7 @@ public static class Loader {
         }
     }
     if ($failed.Count -eq 0) {
-        Write-Host "  all $($order.Count) DLLs loaded clean" `
-            -ForegroundColor Green
+        Write-Host "  all $tested DLLs loaded clean" -ForegroundColor Green
         $verdicts += "the anisette DLL set is complete and healthy"
     } else {
         $problems += "these DLLs will not load: $($failed -join ', ')"
@@ -106,33 +149,35 @@ public static class Loader {
 
 # ---- 3. VC++ runtimes ---------------------------------------------------
 Section "Visual C++ runtimes"
+$node = if ($dllArch -eq 'x86') { 'WOW6432Node\' } else { '' }
 $need = @{
-    'VC++ 2013 x86' = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\12.0\VC\Runtimes\x86'
-    'VC++ 2010 x86' = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\10.0\VC\VCRedist\x86'
+    'VC++ 2013' = "HKLM:\SOFTWARE\${node}Microsoft\VisualStudio\12.0\VC\Runtimes\$dllArch"
+    'VC++ 2010' = "HKLM:\SOFTWARE\${node}Microsoft\VisualStudio\10.0\VC\VCRedist\$dllArch"
 }
 foreach ($k in $need.Keys | Sort-Object) {
     $p = $need[$k]
     if (Test-Path $p) {
-        Write-Host ("  {0,-16} installed {1}" -f $k,
+        Write-Host ("  {0,-12} {1,-4} installed {2}" -f $k, $dllArch,
             (Get-ItemProperty $p).Version) -ForegroundColor Green
     } else {
-        Write-Host ("  {0,-16} MISSING" -f $k) -ForegroundColor Red
-        $problems += "$k is not installed (the x86 build is the one that matters)"
+        Write-Host ("  {0,-12} {1,-4} registry entry absent" -f $k, $dllArch) `
+            -ForegroundColor Yellow
     }
 }
+$sysDir = if ($dllArch -eq 'x86') { 'SysWOW64' } else { 'System32' }
 foreach ($dll in @('msvcr120.dll', 'msvcr100.dll')) {
-    $ok = Test-Path "$env:WINDIR\SysWOW64\$dll"
-    Write-Host ("  SysWOW64\{0,-14} {1}" -f $dll, $(if ($ok) { 'present' } else { 'MISSING' }))
-    if (-not $ok) { $problems += "SysWOW64\$dll is missing" }
+    $ok = Test-Path "$env:WINDIR\$sysDir\$dll"
+    Write-Host ("  {0}\{1,-14} {2}" -f $sysDir, $dll,
+        $(if ($ok) { 'present' } else { 'MISSING' }))
+    if (-not $ok) { $problems += "$sysDir\$dll is missing" }
 }
 
 # ---- 4. things that shadow Apple's DLLs ---------------------------------
 Section "Interference"
-$stray = @(
-    "$env:ProgramFiles\Common Files\Apple\Apple Application Support",
-    "${env:ProgramFiles(x86)}\Common Files\Apple\Apple Application Support")
 $anyStray = $false
-foreach ($p in $stray) {
+foreach ($p in @(
+    "$env:ProgramFiles\Common Files\Apple\Apple Application Support",
+    "${env:ProgramFiles(x86)}\Common Files\Apple\Apple Application Support")) {
     if (Test-Path $p) {
         Write-Host "  installed Apple Application Support: $p"
         $anyStray = $true
@@ -157,7 +202,7 @@ if ($svc) {
     Write-Host "  Apple Mobile Device Service not installed" -ForegroundColor Yellow
 }
 $log = "$root\sideloadlydaemon.log"
-if (Test-Path $log) {
+if ((Test-Path $log) -and (Get-Item $log).Length -gt 0) {
     $line = Get-Content $log -Tail 400 |
         Where-Object { $_ -match 'Udid:' } | Select-Object -Last 1
     if ($line -and $line -match 'Udid:(\S+)\s+Name:(.+?)\s+IsM1') {
@@ -171,7 +216,7 @@ if (Test-Path $log) {
         $problems += "the daemon has not seen a device - check cable and 'Trust'"
     }
 } else {
-    Write-Host "  no daemon log yet"
+    Write-Host "  no daemon log yet (fresh install)"
 }
 
 # ---- verdict -------------------------------------------------------------
