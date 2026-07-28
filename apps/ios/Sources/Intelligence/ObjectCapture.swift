@@ -132,39 +132,52 @@ final class ObjectCapture: ObservableObject {
             }
         }
 
-        var depth: Double
-        var sizeConfidence: Double
+        // A missing measurement must never cost the capture itself: for
+        // an inventory, the photo and the name ARE the product; size and
+        // exact position are bonuses. Field-tested the strict version on
+        // the XR — plain objects routinely have <5 feature points in the
+        // box and the whole capture silently vanished. Never again.
+        var depth: Double?
+        var sizeConfidence = 0.0
         var centroid: SIMD3<Float>?
-        if depths.count >= 5 {
+        if depths.count >= 4 {
             depth = median(depths)
-            sizeConfidence = min(1.0, 0.45 + Double(depths.count) * 0.03)
+            sizeConfidence = min(1.0, 0.42 + Double(depths.count) * 0.03)
             var sum = SIMD3<Float>(repeating: 0)
             for p in points { sum += p }
             centroid = sum / Float(points.count)
         } else if let hit = raycastDepth(frame: frame) {
             depth = hit
             sizeConfidence = 0.35     // plane hit, not the object itself
-        } else {
-            return nil
         }
 
         // --- pinhole: angular size at that depth -> metres -------------
-        let boxPxW = box.width * imgW      // along sensor x
-        let boxPxH = box.height * imgH     // along sensor y
-        let extentSensorX = boxPxW * depth / fx
-        let extentSensorY = boxPxH * depth / fy
-        // Portrait device: the sensor's x axis runs down the screen, so
-        // the object's on-screen width is the sensor-y extent.
-        let widthM = extentSensorY
-        let physicalHeightM = extentSensorX
-
-        // implausible measurements are worse than none
-        guard widthM > 0.005, widthM < 4.0,
-              physicalHeightM > 0.005, physicalHeightM < 4.0 else {
-            return nil
+        var widthM = 0.0
+        var physicalHeightM = 0.0
+        if let depth {
+            let boxPxW = box.width * imgW      // along sensor x
+            let boxPxH = box.height * imgH     // along sensor y
+            let extentSensorX = boxPxW * depth / fx
+            let extentSensorY = boxPxH * depth / fy
+            // Portrait device: the sensor's x axis runs down the
+            // screen, so on-screen width is the sensor-y extent.
+            widthM = extentSensorY
+            physicalHeightM = extentSensorX
+            // implausible measurements are worse than none — drop the
+            // SIZE, keep the capture
+            if widthM < 0.005 || widthM > 4.0
+                || physicalHeightM < 0.005 || physicalHeightM > 4.0 {
+                widthM = 0
+                physicalHeightM = 0
+                sizeConfidence = 0
+            }
         }
 
         // --- world placement -------------------------------------------
+        // With no depth at all, place it ~0.9 m ahead (typical pointing
+        // distance) at low confidence; a better re-look merges onto the
+        // same Thing by fingerprint and pulls the pin to the truth.
+        let placeDepth = depth ?? 0.9
         let world: SIMD3<Float>
         if let centroid {
             world = centroid
@@ -175,7 +188,7 @@ final class ObjectCapture: ObservableObject {
                                                   -t.columns.2.z))
             let origin = SIMD3<Float>(t.columns.3.x, t.columns.3.y,
                                       t.columns.3.z)
-            world = origin + fwd * Float(depth)
+            world = origin + fwd * Float(placeDepth)
         }
 
         return CapturedObject(
@@ -186,7 +199,7 @@ final class ObjectCapture: ObservableObject {
             widthM: widthM,
             physicalHeightM: physicalHeightM,
             sizeConfidence: sizeConfidence,
-            depthM: depth)
+            depthM: depth ?? 0)
     }
 
     private nonisolated static func raycastDepth(frame: ARFrame) -> Double? {
@@ -196,7 +209,8 @@ final class ObjectCapture: ObservableObject {
         // ARFrame.raycastQuery gives the query; the session performs it,
         // but hit-testing the frame directly avoids a session round-trip
         let results = frame.hitTest(CGPoint(x: 0.5, y: 0.5),
-                                    types: [.estimatedHorizontalPlane,
+                                    types: [.existingPlaneUsingExtent,
+                                            .estimatedHorizontalPlane,
                                             .featurePoint])
         _ = query
         guard let first = results.first else { return nil }
@@ -250,6 +264,7 @@ final class ObjectCapture: ObservableObject {
             sighting.thing = existing
             context.insert(sighting)
             lastCaptured = existing
+            SpotlightIndex.index(existing)
             return existing
         }
 
@@ -298,6 +313,7 @@ final class ObjectCapture: ObservableObject {
             }
         }
         lastCaptured = thing
+        SpotlightIndex.index(thing)
         return thing
     }
 

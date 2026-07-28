@@ -11,6 +11,13 @@ import Foundation
 import NavCore
 import SwiftData
 
+struct LocateTarget: Equatable {
+    let thingID: UUID
+    let name: String
+    let x: Double
+    let y: Double
+}
+
 @MainActor
 final class NavEngine: ObservableObject {
     static let mapSide = 14.0        // metres per room map
@@ -30,6 +37,17 @@ final class NavEngine: ObservableObject {
     @Published var isGuiding = false
     @Published var coverage: Double = 0
     @Published var floorAreaM2: Double = 0
+    /// True when the frontier solver finds nothing reachable left to
+    /// map. THIS is "done", not a percentage: a real room always keeps
+    /// some frontier (under the couch, past a doorway), so a raw
+    /// fraction stalls around 70-80% forever and reads as failure.
+    @Published var scanComplete = false
+    /// Set when a route was requested but cannot exist yet; the UI
+    /// shows it as a toast instead of flipping to the guidance screen.
+    @Published var routeProblem: String?
+    /// A thing being located: camera overlay highlights it, the locate
+    /// card tracks live distance/bearing. Lighter than full guidance.
+    @Published var locateTarget: LocateTarget?
     @Published var scanHint: String = "Sweep the phone slowly across the floor"
     @Published var statusLine = ""
     @Published var recording = false
@@ -67,6 +85,8 @@ final class NavEngine: ObservableObject {
         clearGuidance()
         coverage = 0
         floorAreaM2 = 0
+        scanComplete = false
+        locateTarget = nil
         currentRoomID = id
         gridRevision += 1
     }
@@ -77,6 +97,8 @@ final class NavEngine: ObservableObject {
         grid.autoClearance = false
         grid.refreshClearance(force: true)
         currentRoomID = roomID
+        scanComplete = false      // re-derived on the next tick
+        locateTarget = nil        // positions belong to the old room
         recomputeCoverage()
         gridRevision += 1
     }
@@ -143,11 +165,18 @@ final class NavEngine: ObservableObject {
         guard let target = selectTarget(grid: grid, start: here,
                                         params: params, minCluster: 4,
                                         minDistM: 0.6) else {
-            scanHint = coverage > 0.5
-                ? "This room looks well mapped"
-                : "Sweep the phone slowly across the floor"
+            // no reachable frontier cluster left = genuinely done
+            // (require some real floor first so an empty grid at
+            // startup does not count as "complete")
+            if floorAreaM2 > 2.0 {
+                scanComplete = true
+                scanHint = "Scan complete — everything reachable is mapped"
+            } else {
+                scanHint = "Point at the floor and sweep slowly"
+            }
             return
         }
+        scanComplete = false
         let centre = grid.cellCenter(target.cell)
         let bearingToTarget = bearing(from: Vec(pose.x, pose.y), to: centre)
         let rel = wrapAngle(bearingToTarget - pose.heading)
@@ -166,16 +195,28 @@ final class NavEngine: ObservableObject {
 
     // ---- guidance --------------------------------------------------------
 
-    func startGuidance(to target: Vec, name: String) {
+    /// Route to a target. Only flips into guidance when a route
+    /// actually exists — a tap that cannot be served yet becomes a
+    /// toast (`routeProblem`), never an empty full-screen takeover.
+    @discardableResult
+    func startGuidance(to target: Vec, name: String) -> Bool {
         goal = target
         goalName = name
-        isGuiding = true
         grid.refreshClearance(force: true)
         let start = grid.worldToCell(Vec(pose.x, pose.y))
         dstar = DStarLite(grid: grid, start: start,
                           goal: grid.worldToCell(target), params: params)
         if fsm.can(.goalSet) { try? fsm.step(.goalSet) }
         replan()
+        if follower != nil {
+            isGuiding = true
+            routeProblem = nil
+            return true
+        }
+        clearGuidance()
+        routeProblem = "No route to \(name) yet — scan the floor "
+            + "between you and it first"
+        return false
     }
 
     func clearGuidance() {

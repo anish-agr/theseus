@@ -151,21 +151,7 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
                 capture.hint = ""
             }
             if capture.updateDwell(frame: frame) {
-                capture.busy = true
-                let floor = floorY
-                Task.detached(priority: .userInitiated) {
-                    let result = ObjectCapture.analyze(frame: frame,
-                                                       floorY: floor)
-                    await MainActor.run {
-                        capture.busy = false
-                        if let result {
-                            self.pendingCapture = result
-                        } else {
-                            capture.hint =
-                                "Couldn't measure that — move a little closer"
-                        }
-                    }
-                }
+                fire(frame: frame, capture: capture)
             }
         }
 
@@ -187,12 +173,17 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
                     obs.append((c, false))
                 }
             }
+            // Sparse clouds (plain walls, low light — common on the XR)
+            // rarely hit the same cell 3 times before the window slides
+            // past, which under-detected obstacles in the first field
+            // test. Two hits is still two independent observations.
+            let needed = hits.count < 60 ? 2 : 3
             for key in hits {
                 var hist = hitHistory[key, default: []]
                 hist.append(tick)
                 hist.removeAll { tick - $0 >= 12 }
                 hitHistory[key] = hist
-                if hist.count >= 3 {
+                if hist.count >= needed {
                     obs.append((unpack(key), true))
                 }
             }
@@ -203,6 +194,33 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
 
         engine.observeCells(obs, tick: tick)
         engine.tick()
+    }
+
+    /// The shutter button: same pipeline as a completed dwell, fired
+    /// deliberately. Backup for when holding steady is awkward.
+    func captureNow() {
+        guard let capture, !capture.busy, floorFound,
+              let frame = session?.currentFrame else { return }
+        capture.resetDwell()
+        fire(frame: frame, capture: capture)
+    }
+
+    private func fire(frame: ARFrame, capture: ObjectCapture) {
+        capture.busy = true
+        let floor = floorY
+        Task.detached(priority: .userInitiated) {
+            let result = ObjectCapture.analyze(frame: frame,
+                                               floorY: floor)
+            await MainActor.run {
+                capture.busy = false
+                if let result {
+                    self.pendingCapture = result
+                } else {
+                    capture.hint =
+                        "Couldn't see that — try the shutter button"
+                }
+            }
+        }
     }
 
     private func ingestPlanes(_ anchors: [ARAnchor]) {
@@ -221,11 +239,19 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
                     floorY = y
                     floorFound = true
                 }
-                // only the floor itself carves walkable space; a table
-                // top is horizontal too and is emphatically not floor
-                guard abs(y - floorY) < 0.15 else { continue }
-                obs += rasterize(plane, transform: world, occupied: false,
-                                 grid: engine.grid)
+                let h = y - floorY
+                if abs(h) < 0.15 {
+                    // the floor itself carves walkable space
+                    obs += rasterize(plane, transform: world,
+                                     occupied: false, grid: engine.grid)
+                } else if floorFound, h > 0.15, h < 1.8 {
+                    // An elevated horizontal plane is a tabletop, seat
+                    // or shelf — a real obstacle you would walk into.
+                    // (First field test: tables were invisible because
+                    // this branch didn't exist.) Ceilings are excluded.
+                    obs += rasterize(plane, transform: world,
+                                     occupied: true, grid: engine.grid)
+                }
             } else {
                 obs += rasterize(plane, transform: world, occupied: true,
                                  grid: engine.grid)
