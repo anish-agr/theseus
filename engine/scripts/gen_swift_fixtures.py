@@ -523,6 +523,89 @@ def gen_solvers() -> None:
     path = OUT / "SolverParity.swift"
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"wrote {path}")
+    gen_state()
+
+
+def gen_state() -> None:
+    """Waypoint-registry and snapshot parity: a scripted detection
+    stream with merges, promotions, and decay deaths; RLE round-trip and
+    diff on the messy grid."""
+    from theseus_engine import serialize
+    from theseus_engine.waypoints import WaypointRegistry
+
+    reg = WaypointRegistry()
+    stream = [
+        ("report", "fridge", (3.0, 2.0), 0.9, 1),
+        ("report", "fridge", (3.1, 2.05), 0.8, 2),
+        ("report", "chair", (1.0, 1.0), 0.6, 2),
+        ("report", "fridge", (2.95, 1.9), 1.0, 3),
+        ("report", "ghost", (5.0, 5.0), 0.4, 3),
+        ("observe", (3.0, 2.0), 2.6, 4),
+        ("report", "chair", (1.05, 0.95), 0.7, 5),
+        ("observe", (4.5, 4.5), 1.2, 6),
+        ("observe", (4.5, 4.5), 1.2, 7),
+        ("report", "chair", (1.0, 1.02), 0.9, 8),
+        ("report", "chair", (0.98, 1.0), 0.8, 9),
+        ("observe", (1.0, 1.0), 2.0, 10),
+    ]
+    ops_lit, deads = [], []
+    for op in stream:
+        if op[0] == "report":
+            _, lab, pos, conf, tick = op
+            wp = reg.report(lab, pos, confidence=conf, tick=tick)
+            ops_lit.append(f"(\"report\", \"{lab}\", {_vec(pos)}, "
+                           f"{lit(conf)}, {tick})")
+        else:
+            _, center, radius, tick = op
+            seen = set()
+            if tick == 10:  # the chair was re-sighted this frame
+                seen = {w.uid for w in reg.all() if w.label == "chair"}
+            dead = reg.observe_area(center, radius, tick, seen)
+            deads.append(dead)
+            ops_lit.append(f"(\"observe\", {_vec(center)}, {lit(radius)}, "
+                           f"{tick})")
+    final = ", ".join(
+        f"(\"{w.uid}\", \"{w.label}\", {_vec(w.pos)}, {lit(w.confidence)}, "
+        f"{w.hits}, {str(w.promoted).lower()})" for w in reg.all())
+    targets = ", ".join(f"\"{w.uid}\"" for w in reg.targets())
+    deads_lit = ", ".join(
+        "[" + ", ".join(f"\"{u}\"" for u in d) + "]" for d in deads)
+
+    # --- snapshot round-trip + diff on the messy grid ------------------
+    grid, _, _ = _built_grid()
+    snap = serialize.to_dict(grid)
+    grid2, _, _ = _built_grid()
+    grid2.set_state((0, 0), 2, label="crate")   # appeared
+    grid2.set_state((3, 1), 1)                  # whatever it was -> free
+    d = serialize.diff(grid, grid2)
+    rep = serialize.diff_report(grid, grid2)
+    states_lit = ", ".join(str(v) for v in snap["states"])
+    labels_lit = ", ".join(f"({k}, \"{v}\")"
+                           for k, v in sorted(grid.labels.items()))
+    diff_lit = ", ".join(f"({_cell(c)}, {sa}, {sb})" for c, sa, sb in d)
+    by_label = ", ".join(f"\"{k}\": {v}"
+                         for k, v in sorted(rep["by_label"].items()))
+
+    lines = [
+        HEADER,
+        "let wpStream: [(String, String, Vec, Double, Int)] = ["
+        + ", ".join(o if o.startswith("(\"report")
+                    else o.replace("(\"observe\", ", "(\"observe\", \"\", ")
+                    for o in ops_lit) + "]\n",
+        f"let wpDeadLists: [[String]] = [{deads_lit}]\n",
+        "let wpFinal: [(String, String, Vec, Double, Int, Bool)] = ["
+        + final + "]\n",
+        f"let wpTargets: [String] = [{targets}]\n",
+        f"let snapStates: [Int] = [{states_lit}]\n",
+        f"let snapLabels: [(Int, String)] = [{labels_lit}]\n",
+        f"let diffWant: [(Cell, Int, Int)] = [{diff_lit}]\n",
+        f"let diffAppeared = {rep['appeared']}\n",
+        f"let diffVanished = {rep['vanished']}\n",
+        f"let diffByLabel: [String: Int] = [{by_label or ':'}]\n",
+    ]
+    path = OUT / "StateParity.swift"
+    path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    print(f"wrote {path}")
 
 
 if __name__ == "__main__":
