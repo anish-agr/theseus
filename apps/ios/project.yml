@@ -22,6 +22,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.anish.theseus
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # actool emits CFBundleIcons but not CFBundleIconName for a
+        # single-size universal icon; App Store Connect rejects uploads
+        # without it (ITMS-90713), so set it explicitly.
+        INFOPLIST_KEY_CFBundleIconName: AppIcon
         INFOPLIST_KEY_NSCameraUsageDescription: "Theseus scans the room with the camera to build a live navigation map."
         # no encryption beyond what iOS itself provides — declaring it
         # here skips the export-compliance prompt on every TestFlight build
