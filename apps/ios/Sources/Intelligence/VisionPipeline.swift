@@ -143,6 +143,20 @@ enum VisionPipeline {
         return out
     }
 
+    /// Raw text lines from a photo — the serial-plate reader. Language
+    /// correction OFF: autocorrect mangles exactly the strings we want.
+    static func textLines(in image: UIImage) -> [String] {
+        guard let cg = image.cgImage else { return [] }
+        let handler = VNImageRequestHandler(cgImage: cg, orientation: .up)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try? handler.perform([request])
+        return request.results?
+            .compactMap { $0.topCandidates(1).first?.string }
+            .filter { $0.count >= 2 } ?? []
+    }
+
     /// Distance between two stored feature prints; smaller is more
     /// similar. Used to recognise the same physical object again.
     static func distance(_ a: Data, _ b: Data) -> Float? {

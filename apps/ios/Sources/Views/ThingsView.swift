@@ -122,6 +122,12 @@ struct ThingsView: View {
 struct ThingRow: View {
     let thing: Thing
     let showRoom: Bool
+    @Query private var spots: [StorageSpot]
+
+    private var spotName: String? {
+        guard let id = thing.storageID else { return nil }
+        return spots.first { $0.id == id }?.name
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -131,11 +137,16 @@ struct ThingRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(thing.displayName).font(.headline).lineLimit(1)
                 HStack(spacing: 5) {
-                    if showRoom, let room = thing.room {
+                    if let spotName {
+                        Text("in \(spotName)")
+                        Text("·")
+                    } else if showRoom, let room = thing.room {
                         Text(room.name)
                         Text("·")
                     }
-                    Text(thing.sizeDescription)
+                    if thing.hasPosition || thing.widthM > 0 {
+                        Text(thing.sizeDescription)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -180,11 +191,18 @@ struct ThingDetailView: View {
     @Bindable var thing: Thing
     @Binding var activeRoom: Room?
     @Binding var selectedTab: Int
+    @ObservedObject private var ai = AIService.shared
     @State private var renaming = false
     @State private var draft = ""
     @State private var priceDraft = ""
     @State private var receiptPick: PhotosPickerItem?
     @State private var hasReceipt = false
+    @State private var estimating = false
+    @State private var estimateNote: String?
+    @State private var aiError: String?
+    @State private var scanningSerial = false
+    @State private var serialCandidates: [String] = []
+    @State private var hasWarranty = false
 
     var body: some View {
         List {
@@ -234,6 +252,29 @@ struct ThingDetailView: View {
                         .keyboardType(.decimalPad)
                         .onSubmit(savePrice)
                         .onChange(of: priceDraft) { _, _ in savePrice() }
+                    if thing.priceSource == "ai" {
+                        Text("AI estimate")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if ai.isConfigured {
+                    Button {
+                        estimateValue()
+                    } label: {
+                        HStack {
+                            Label("Estimate value with AI",
+                                  systemImage: "sparkle.magnifyingglass")
+                            Spacer()
+                            if estimating { ThreadLoadingView(size: 24) }
+                        }
+                    }
+                    .disabled(estimating)
+                    if let estimateNote {
+                        Text(estimateNote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 PhotosPicker(selection: $receiptPick,
                              matching: .images) {
@@ -250,21 +291,74 @@ struct ThingDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
             }
-            Section {
+            Section("Insurance") {
+                if let serial = thing.serialNumber {
+                    LabeledContent("Serial") {
+                        Text(serial).textSelection(.enabled)
+                            .font(.callout.monospaced())
+                    }
+                }
                 Button {
-                    // camera + green beacon + live distance — the
-                    // default "find" (turn-by-turn stays one tap away
-                    // on the locate bar)
-                    guard let room = thing.room else { return }
-                    activeRoom = room
-                    engine.makeActive(room)
-                    engine.locateTarget = LocateTarget(
-                        thingID: thing.id, name: thing.displayName,
-                        x: thing.positionX, y: thing.positionY)
-                    selectedTab = 1
-                    dismiss()
+                    scanningSerial = true
                 } label: {
-                    Label("Find it", systemImage: "location.fill")
+                    Label(thing.serialNumber == nil
+                          ? "Scan serial number"
+                          : "Re-scan serial",
+                          systemImage: "number.square")
+                }
+                Toggle("Warranty", isOn: $hasWarranty)
+                    .onChange(of: hasWarranty) { _, on in
+                        if on, thing.warrantyUntil == nil {
+                            thing.warrantyUntil = Calendar.current.date(
+                                byAdding: .year, value: 1, to: Date())
+                        } else if !on {
+                            thing.warrantyUntil = nil
+                            thing.warrantyNote = nil
+                        }
+                    }
+                if hasWarranty {
+                    DatePicker(
+                        "Expires",
+                        selection: Binding(
+                            get: { thing.warrantyUntil ?? Date() },
+                            set: { thing.warrantyUntil = $0 }),
+                        displayedComponents: .date)
+                    TextField("Warranty note — provider, terms…",
+                              text: Binding(
+                                get: { thing.warrantyNote ?? "" },
+                                set: {
+                                    thing.warrantyNote =
+                                        $0.isEmpty ? nil : $0
+                                }))
+                }
+                if let aiError {
+                    Text(aiError)
+                        .font(.caption)
+                        .foregroundStyle(Color.brandDotCool)
+                }
+            }
+            Section {
+                if !thing.hasPosition {
+                    // itemized box contents have a home, not a pin
+                    Label("Lives in storage — see the Storage list",
+                          systemImage: "shippingbox")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button {
+                        // camera + green beacon + live distance — the
+                        // default "find" (turn-by-turn stays one tap
+                        // away on the locate bar)
+                        guard let room = thing.room else { return }
+                        activeRoom = room
+                        engine.makeActive(room)
+                        engine.locateTarget = LocateTarget(
+                            thingID: thing.id, name: thing.displayName,
+                            x: thing.positionX, y: thing.positionY)
+                        selectedTab = 1
+                        dismiss()
+                    } label: {
+                        Label("Find it", systemImage: "location.fill")
+                    }
                 }
                 Button {
                     draft = thing.displayName
@@ -306,6 +400,32 @@ struct ThingDetailView: View {
                     ? String(Int(price)) : String(price)
             }
             hasReceipt = Store.hasReceipt(thing.id)
+            hasWarranty = thing.warrantyUntil != nil
+        }
+        .sheet(isPresented: $scanningSerial) {
+            CameraSheet { image in
+                serialCandidates = Self.serialLike(
+                    VisionPipeline.textLines(in: image))
+                if serialCandidates.isEmpty {
+                    aiError = "No serial-looking text found — get "
+                        + "closer to the label."
+                }
+            }
+        }
+        .confirmationDialog("Which line is the serial?",
+                            isPresented: Binding(
+                                get: { !serialCandidates.isEmpty },
+                                set: { if !$0 { serialCandidates = [] } })
+        ) {
+            ForEach(serialCandidates, id: \.self) { candidate in
+                Button(candidate) {
+                    thing.serialNumber = candidate
+                    serialCandidates = []
+                }
+            }
+            Button("None of these", role: .cancel) {
+                serialCandidates = []
+            }
         }
         .onChange(of: receiptPick) { _, item in
             guard let item else { return }
@@ -334,5 +454,71 @@ struct ThingDetailView: View {
     private func savePrice() {
         let cleaned = priceDraft.replacingOccurrences(of: ",", with: ".")
         thing.price = Double(cleaned)
+        thing.priceSource = ""     // a typed value is the user's own
+    }
+
+    private func estimateValue() {
+        estimating = true
+        aiError = nil
+        Task {
+            do {
+                var details = "Category: \(thing.category)."
+                if thing.widthM > 0 {
+                    details += " Measured size: \(thing.sizeDescription)."
+                }
+                if !thing.recognizedText.isEmpty {
+                    details += " Text on it: \(thing.recognizedText)."
+                }
+                let (value, note) = try await ai.estimateValue(
+                    image: Store.loadThumb(thing.id),
+                    name: thing.displayName, details: details)
+                thing.price = value
+                thing.priceSource = "ai"
+                priceDraft = String(Int(value.rounded()))
+                estimateNote = note
+            } catch {
+                aiError = error.localizedDescription
+            }
+            estimating = false
+        }
+    }
+
+    /// Rank OCR lines by how much they look like a serial number:
+    /// long, digit-bearing, not a word you'd find in a manual.
+    static func serialLike(_ lines: [String]) -> [String] {
+        lines
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { line in
+                line.count >= 5 && line.count <= 40
+                    && line.contains(where: \.isNumber)
+            }
+            .sorted { a, b in
+                func score(_ s: String) -> Int {
+                    var v = 0
+                    let upper = s.uppercased()
+                    if upper.contains("S/N") || upper.contains("SERIAL")
+                        || upper.contains("SN:") { v += 100 }
+                    v += s.filter(\.isNumber).count * 2
+                    v += s.filter { $0.isUppercase }.count
+                    if s.contains(" ") { v -= 5 }
+                    return v
+                }
+                return score(a) > score(b)
+            }
+            .prefix(5)
+            .map { line in
+                // strip the "S/N:" prefix if the plate includes it
+                var s = line
+                for prefix in ["S/N:", "S/N", "SN:", "Serial No.",
+                               "Serial:", "Serial"] {
+                    if s.uppercased().hasPrefix(prefix.uppercased()) {
+                        s = String(s.dropFirst(prefix.count))
+                            .trimmingCharacters(
+                                in: CharacterSet(charactersIn: " :.#"))
+                        break
+                    }
+                }
+                return s.isEmpty ? line : s
+            }
     }
 }
