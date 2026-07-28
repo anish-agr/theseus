@@ -10,6 +10,7 @@ struct SettingsView: View {
     @Query private var things: [Thing]
     @StateObject private var embedder = EmbedderManager.shared
     @ObservedObject private var ai = AIService.shared
+    @AppStorage("aiAutoName") private var aiAutoName = true
     @State private var keyDraft = ""
     @State private var aiTestState: AITestState = .idle
     @State private var confirmWipe = false
@@ -44,13 +45,16 @@ struct SettingsView: View {
                             Text("Installed")
                         }
                     case .notInstalled:
-                        Text("Search currently matches names, labels and "
-                             + "text read off objects. Installing the "
-                             + "language model adds descriptive search "
-                             + "like \"blue ceramic mug\".")
+                        Text("Search matches names, labels, text read "
+                             + "off objects, synonyms — and, with AI "
+                             + "naming on, the AI's one-line "
+                             + "description of each item, so \"blue "
+                             + "ceramic mug\" finds the mug.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("Model install lands in a coming build.")
+                        Text("An on-device image model (search by "
+                             + "photo meaning, no AI key) lands in a "
+                             + "later build.")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     case .downloading(let p):
@@ -188,6 +192,8 @@ struct SettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(Color.brandDotCool)
             }
+            Toggle("Name unsure captures with AI",
+                   isOn: $aiAutoName)
         } header: {
             Text("AI")
         } footer: {
@@ -195,12 +201,15 @@ struct SettingsView: View {
                 Text("Free: sign in at aistudio.google.com/apikey — no "
                      + "card needed — and paste the key here. Unlocks "
                      + "box itemizing, value estimates and \"what is "
-                     + "this\". Photos leave the phone only when you "
-                     + "tap an AI button, and go only to the provider "
-                     + "you chose.")
+                     + "this\". Photos go only to the provider you "
+                     + "chose, and only when you tap an AI button — "
+                     + "or, with the toggle on, when a capture needs "
+                     + "a name the phone can't work out itself.")
             } else {
-                Text("Photos leave the phone only when you tap an AI "
-                     + "button, and go only to the provider you chose.")
+                Text("Photos go only to the provider you chose, and "
+                     + "only when you tap an AI button — or, with the "
+                     + "toggle on, when a capture needs a name the "
+                     + "phone can't work out itself.")
             }
         }
         .onAppear {

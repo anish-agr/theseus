@@ -20,9 +20,11 @@ struct ScanView: View {
     @ObservedObject private var ai = AIService.shared
     @Query private var allThings: [Thing]
     @Query private var spots: [StorageSpot]
+    @AppStorage("aiAutoName") private var aiAutoName = true
     @State private var card: CapturedObject?
     @State private var cardThing: Thing?
     @State private var cardWasNew = false
+    @State private var aiNaming = false
     @State private var renaming = false
     @State private var draftName = ""
     @State private var saveNotice: String?
@@ -133,13 +135,25 @@ struct ScanView: View {
             draftName = thing.displayName
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             session.pendingCapture = nil
-            // Only ask when the whole naming cascade came up empty —
-            // classifier, lookalike borrowing, and text on the object.
+            // Cascade order (Anish's): classifier → lookalike → AI →
+            // text on the object → ask. The AI step runs here, after
+            // commit, because it's async — it quietly upgrades weak
+            // auto-names and only ever asks the user when IT failed
+            // too.
+            let wantAI = aiAutoName && ai.isConfigured
+                && !thing.userNamed && thing.autoConfidence < 0.45
             if thing.displayName == "Unnamed object" {
-                draftName = ""
-                renaming = true
+                if wantAI {
+                    aiName(thing, captured: new, askIfFailed: true)
+                } else {
+                    draftName = ""
+                    renaming = true
+                }
             } else {
                 autoDismissCard()
+                if wantAI {
+                    aiName(thing, captured: new, askIfFailed: false)
+                }
             }
         }
         .onDisappear(perform: persist)
@@ -176,7 +190,9 @@ struct ScanView: View {
     private var pins: [(id: UUID, x: Double, y: Double, height: Double,
                         highlighted: Bool)] {
         let target = engine.locateTarget?.thingID
-        return (room?.things ?? []).map {
+        // hasPosition filter: itemized box contents have no pin and
+        // must not render a marker at the grid origin
+        return (room?.things ?? []).filter(\.hasPosition).map {
             ($0.id, $0.positionX, $0.positionY, $0.heightM,
              $0.id == target)
         }
@@ -184,7 +200,7 @@ struct ScanView: View {
 
     private var minimapPins: [(x: Double, y: Double, highlighted: Bool)] {
         let target = engine.locateTarget?.thingID
-        return (room?.things ?? []).map {
+        return (room?.things ?? []).filter(\.hasPosition).map {
             ($0.positionX, $0.positionY, $0.id == target)
         }
     }
@@ -449,6 +465,7 @@ struct ScanView: View {
             thing.displayName = lensAI.name
             thing.userNamed = true
             thing.category = lensAI.category
+            thing.aiSummary = lensAI.summary
             if let value = lensAI.estimatedValue {
                 thing.price = value
                 thing.priceSource = "ai"
@@ -631,8 +648,13 @@ struct ScanView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(cardThing?.displayName ?? "Object")
-                    .font(.headline).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(cardThing?.displayName ?? "Object")
+                        .font(.headline).lineLimit(1)
+                    if aiNaming {
+                        ThreadLoadingView(size: 16)
+                    }
+                }
                 Text(sizeLine(captured))
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -660,6 +682,56 @@ struct ScanView: View {
         .padding(10)
         .background(.ultraThinMaterial,
                     in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    /// The AI step of the naming cascade: identify the crop, apply
+    /// name + category + one-line description (which SmartSearch then
+    /// searches — "blue ceramic mug" works forever after), and fill
+    /// the value if none is set. Runs automatically when on-device
+    /// recognition is unsure; a user-given name always outranks it.
+    private func aiName(_ thing: Thing, captured: CapturedObject,
+                        askIfFailed: Bool) {
+        guard let image = captured.recognition.image else {
+            if askIfFailed {
+                draftName = ""
+                renaming = true
+            }
+            return
+        }
+        aiNaming = true
+        Task {
+            defer { aiNaming = false }
+            do {
+                let idn = try await ai.identify(
+                    image: image,
+                    hint: captured.recognition.text.isEmpty
+                        ? nil
+                        : "Text on it: \(captured.recognition.text)")
+                guard !thing.isDeleted, !thing.userNamed else { return }
+                thing.displayName = idn.name
+                thing.autoLabel = idn.name
+                // sticky enough that a later weak classifier glance
+                // doesn't stomp the AI's answer
+                thing.autoConfidence = max(thing.autoConfidence, 0.75)
+                thing.category = idn.category
+                thing.aiSummary = idn.summary
+                if thing.price == nil, let value = idn.estimatedValue {
+                    thing.price = value
+                    thing.priceSource = "ai"
+                }
+                SpotlightIndex.index(thing)
+                if cardThing?.id == thing.id {
+                    draftName = thing.displayName
+                }
+            } catch {
+                if askIfFailed, !thing.isDeleted,
+                   thing.displayName == "Unnamed object",
+                   cardThing?.id == thing.id {
+                    draftName = ""
+                    renaming = true
+                }
+            }
+        }
     }
 
     /// "Don't save this item" — deletes the thing the capture just
@@ -910,7 +982,8 @@ struct ScanSummarySheet: View {
     }
 
     private var pins: [(x: Double, y: Double, highlighted: Bool)] {
-        (room?.things ?? []).map { ($0.positionX, $0.positionY, false) }
+        (room?.things ?? []).filter(\.hasPosition)
+            .map { ($0.positionX, $0.positionY, false) }
     }
 
     private func stat(value: String, label: String) -> some View {

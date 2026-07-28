@@ -128,6 +128,12 @@ final class Thing {
     var lastSeenAt: Date = Date()
     var isMissing: Bool = false
 
+    /// One-line AI description ("blue ceramic mug with a chipped
+    /// handle") — written by automatic AI naming, searched by
+    /// SmartSearch, so descriptive queries work fully offline after
+    /// the one capture-time call.
+    var aiSummary: String?
+
     // value tracking (optional — powers the insurance report totals).
     // The receipt photo itself is a blob (Store.receiptURL).
     var price: Double?
@@ -185,7 +191,8 @@ final class Thing {
 
     var searchHaystack: String {
         [displayName, autoLabel, recognizedText, category,
-         barcode ?? ""].joined(separator: " ").lowercased()
+         aiSummary ?? "", barcode ?? ""]
+            .joined(separator: " ").lowercased()
     }
 }
 

@@ -61,6 +61,27 @@ enum Reports {
         }
     }
 
+    /// Things that actually live at a map position — itemized box
+    /// contents (hasPosition == false) must never draw a bogus dot at
+    /// the grid origin.
+    static func pinnable(_ things: [Thing]) -> [Thing] {
+        things.filter(\.hasPosition)
+    }
+
+    /// The floor plan as an image, for on-screen overlays (change
+    /// map) as well as the PNG export below.
+    static func floorPlanImage(room: Room,
+                               sizePx: CGFloat = 700) -> UIImage? {
+        guard let grid = Store.loadGrid(room.id) else { return nil }
+        let size = CGSize(width: sizePx, height: sizePx)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { rctx in
+            drawFloorPlan(grid: grid, things: pinnable(room.things),
+                          in: rctx.cgContext,
+                          rect: CGRect(origin: .zero, size: size))
+        }
+    }
+
     // ---- floor plan PNG --------------------------------------------------
 
     static func floorPlanPNG(room: Room) -> URL? {
@@ -68,7 +89,7 @@ enum Reports {
         let size = CGSize(width: 1000, height: 1000)
         let renderer = UIGraphicsImageRenderer(size: size)
         let image = renderer.image { rctx in
-            drawFloorPlan(grid: grid, things: room.things,
+            drawFloorPlan(grid: grid, things: pinnable(room.things),
                           in: rctx.cgContext,
                           rect: CGRect(origin: .zero, size: size))
             let title = "\(room.name) — Theseus"
@@ -137,7 +158,8 @@ enum Reports {
                     let planRect = CGRect(x: margin, y: y,
                                           width: page.width - margin * 2,
                                           height: 260)
-                    drawFloorPlan(grid: grid, things: room.things,
+                    drawFloorPlan(grid: grid,
+                                  things: pinnable(room.things),
                                   in: pdf.cgContext, rect: planRect)
                     y += 272
                 }

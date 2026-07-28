@@ -60,7 +60,10 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
 - **FR-2.5** 🧪 Naming SHALL cascade, asking the user ONLY as the last
   resort: (1) classifier ≈1,300 categories → (2) visual match against
   things the user already named ("looks like your charging brick") →
-  (3) text on the object → (4) prompt the user once.
+  (3) **AI identify** (automatic when configured and enabled; also
+  writes the searchable one-line description and a value if none) →
+  (4) text on the object → (5) prompt the user once. The user is
+  asked only when the AI also failed or isn't set up.
 - **FR-2.6** ✅ A user-entered name SHALL permanently outrank any
   automatic label.
 - **FR-2.7** 🧪 A re-sighting of the same physical object (near-by AND
@@ -95,9 +98,10 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
 - **FR-3.4** ✅ Thing detail SHALL show photo, size (± quality note),
   positions on the floor plan, first/last seen, text found, sighting
   history, rename and delete.
-- **FR-3.5** 📋 Natural-language description search ("blue ceramic
-  mug") via optional on-demand CLIP model; UI hides semantic search
-  until the model is installed.
+- **FR-3.5** 🧪 Descriptive search ("blue ceramic mug") works via the
+  AI's one-line description stored per item at capture time, searched
+  fully offline by SmartSearch. 📋 The on-device CLIP model (search
+  by photo meaning, no AI key needed) remains a later upgrade.
 - **FR-3.6** 🧪 Export the whole inventory as JSON; export any room as
   a **report PDF** (photos, sizes, values, floor plan) — the
   insurance/moving document.
@@ -165,8 +169,10 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
   Gemini (recommended — the free AI Studio tier costs nothing),
   Anthropic, or any OpenAI-compatible endpoint. Key entered once in
   Settings, stored in the Keychain, sent as a header, never in a URL.
-- **FR-8.2** 🧪 A photo SHALL leave the device ONLY when the user taps
-  an explicitly-AI action; never in the background. Uploads are
+- **FR-8.2** 🧪 A photo SHALL leave the device only for AI actions the
+  user controls: explicit AI taps, plus — when the "name unsure
+  captures" toggle is on (default, user-disableable) — the cropped
+  photo of a capture the on-device cascade couldn't name. Uploads are
   downscaled (≤1024 px).
 - **FR-8.3** 🧪 AI actions: itemize a storage photo (FR-9.3), estimate
   replacement value (FR-10.4), identify an unknown object (FR-12.3).
@@ -234,7 +240,9 @@ Legend: ✅ implemented · 🧪 implemented, not yet field-validated ·
   lights the beacon or answers with the storage spot. Mic hot only
   while the button shows it.
 - **FR-12.5** 🧪 What-changed reads as a diff: +added, −missing,
-  ~moved with photos, against a chosen archived scan.
+  ~moved with photos, against a chosen archived scan — plus the map
+  view: the floor plan with green dots (added), red rings (missing),
+  and orange was→is arrows (moved) drawn on it.
 
 ## NFR (non-functional)
 
