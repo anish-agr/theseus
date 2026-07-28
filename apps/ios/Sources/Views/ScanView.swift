@@ -123,6 +123,24 @@ struct ScanView: View {
             syncRoom()
         }
         .onChange(of: room?.id) { _, _ in syncRoom() }
+        // thermal discipline: the camera pipeline runs ONLY while the
+        // scanner is on screen (or guidance is live) — otherwise it
+        // cooks the phone into throttling within minutes
+        .onChange(of: selectedTab) { _, tab in
+            if tab == 1 {
+                session.resumeSession()
+            } else if !engine.isGuiding {
+                persist()
+                session.pauseSession()
+            }
+        }
+        .onChange(of: engine.isGuiding) { _, guiding in
+            if guiding {
+                session.resumeSession()
+            } else if selectedTab != 1 {
+                session.pauseSession()
+            }
+        }
         // onReceive rather than onChange: CapturedObject carries a
         // UIImage and is deliberately not Equatable
         .onReceive(session.$pendingCapture) { new in

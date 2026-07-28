@@ -83,8 +83,31 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
         hitHistory.removeAll()
         floorFound = false
         tick = 0
+        paused = false
         session?.run(configuration(worldMap: worldMap),
                      options: [.resetTracking, .removeExistingAnchors])
+    }
+
+    // ---- thermal discipline ----------------------------------------------
+    // The camera + tracking pipeline at 60 fps cooks an A12 in minutes;
+    // field test 4's "glitchy until you restart the app" was thermal
+    // throttling from the session running forever, even in other tabs.
+    // Pause whenever the scanner isn't on screen; resume continues the
+    // same session (no reset), so the map and tracking survive.
+
+    private(set) var paused = false
+
+    func pauseSession() {
+        guard !paused else { return }
+        paused = true
+        session?.pause()
+        subjectBox = nil
+    }
+
+    func resumeSession() {
+        guard paused, let session else { return }
+        paused = false
+        session.run(configuration())
     }
 
     /// Save the current map for this room, reporting honestly whether
@@ -175,9 +198,9 @@ final class ARSessionManager: NSObject, ObservableObject, ARSessionDelegate {
             }
         }
 
-        // the lock-on frame: saliency at ~5 Hz, off the main actor,
-        // offset from the ingest tick so the two never stack up
-        if frameCount % 12 == 6, floorFound, !saliencyBusy,
+        // the lock-on frame: saliency at ~2.5 Hz (any faster just adds
+        // heat), off the main actor, offset from the ingest tick
+        if frameCount % 24 == 6, floorFound, !saliencyBusy,
            capture?.busy != true {
             saliencyBusy = true
             let buffer = frame.capturedImage

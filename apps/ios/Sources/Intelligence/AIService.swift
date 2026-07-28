@@ -68,6 +68,10 @@ enum AIError: LocalizedError {
     case notConfigured
     case http(Int, String)
     case badReply(String)
+    /// The model burned the whole output budget thinking and returned
+    /// empty content (finishReason MAX_TOKENS) — retryable with a
+    /// bigger budget.
+    case truncated
 
     var errorDescription: String? {
         switch self {
@@ -78,6 +82,8 @@ enum AIError: LocalizedError {
             return "AI request failed (\(code)): \(body.prefix(160))"
         case .badReply(let text):
             return "Couldn't read the AI's reply: \(text.prefix(120))"
+        case .truncated:
+            return "The model ran out of room before answering."
         }
     }
 }
@@ -298,21 +304,76 @@ final class AIService: ObservableObject {
                             maxTokens: Int) async throws -> String {
         guard let key = apiKey else { throw AIError.notConfigured }
         let jpegs = images.compactMap { Self.downscaledJPEG($0) }
-        do {
-            return try await performCall(key: key, model: model,
-                                         prompt: prompt, jpegs: jpegs,
-                                         maxTokens: maxTokens)
-        } catch AIError.http(let code, _)
-            where code == 404 && kind == .gemini {
-            // Google retired this model id for this key. Ask the API
-            // what the key CAN run, remember it, and retry once.
-            let discovered = try await Self.discoverGeminiModel(
-                key: key)
-            geminiResolved = discovered
-            return try await performCall(key: key, model: discovered,
-                                         prompt: prompt, jpegs: jpegs,
-                                         maxTokens: maxTokens)
+        if kind == .gemini {
+            return try await geminiCall(key: key, prompt: prompt,
+                                        jpegs: jpegs,
+                                        maxTokens: maxTokens)
         }
+        return try await performCall(key: key, model: model,
+                                     prompt: prompt, jpegs: jpegs,
+                                     maxTokens: maxTokens)
+    }
+
+    /// Gemini's API surface shifts under us, so this call self-heals
+    /// three known ways (each learned from a field-test screenshot):
+    ///  · 404 model retired      → list this key's models, retry
+    ///  · 400 INVALID_ARGUMENT   → this generation rejects the
+    ///    thinking-off knob; drop it, remember, retry
+    ///  · empty + MAX_TOKENS     → thinking ate the budget; retry
+    ///    with 4× the tokens
+    private func geminiCall(key: String, prompt: String,
+                            jpegs: [Data],
+                            maxTokens: Int) async throws -> String {
+        var model = self.model
+        var tokens = maxTokens
+        var thinkingOff = !UserDefaults.standard.bool(
+            forKey: "geminiNoThinkingCfg")
+        var attempts = 0
+        while true {
+            attempts += 1
+            do {
+                let request = try Self.geminiRequest(
+                    key: key, model: model, prompt: prompt,
+                    jpegs: jpegs, maxTokens: tokens,
+                    thinkingOff: thinkingOff)
+                return try await send(request)
+            } catch AIError.http(404, _) where attempts <= 2 {
+                model = try await Self.discoverGeminiModel(key: key)
+                geminiResolved = model
+            } catch AIError.http(400, let body)
+                where thinkingOff && attempts <= 3
+                    && body.contains("INVALID_ARGUMENT") {
+                thinkingOff = false
+                UserDefaults.standard.set(
+                    true, forKey: "geminiNoThinkingCfg")
+            } catch AIError.truncated where attempts <= 3 {
+                tokens = min(tokens * 4, 16000)
+            }
+        }
+    }
+
+    /// Shared transport: run the request, surface HTTP failures with
+    /// their body, hand back the extracted text.
+    private func send(_ request: URLRequest) async throws -> String {
+        let (data, response) = try await URLSession.shared.data(
+            for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let raw = String(data: data, encoding: .utf8) ?? ""
+        guard (200..<300).contains(code) else {
+            throw AIError.http(code, raw)
+        }
+        guard let obj = try? JSONSerialization.jsonObject(with: data)
+            as? [String: Any] else {
+            throw AIError.badReply(raw.isEmpty ? "empty" : raw)
+        }
+        let text = Self.extractText(kind: kind, from: obj) ?? ""
+        guard !text.isEmpty else {
+            if raw.contains("MAX_TOKENS") {
+                throw AIError.truncated
+            }
+            throw AIError.badReply(raw)
+        }
+        return text
     }
 
     private func performCall(key: String, model: String,
@@ -323,7 +384,7 @@ final class AIService: ObservableObject {
         case .gemini:
             request = try Self.geminiRequest(
                 key: key, model: model, prompt: prompt, jpegs: jpegs,
-                maxTokens: maxTokens)
+                maxTokens: maxTokens, thinkingOff: false)
         case .anthropic:
             request = try Self.anthropicRequest(
                 key: key, model: model, prompt: prompt, jpegs: jpegs,
@@ -333,21 +394,7 @@ final class AIService: ObservableObject {
                 endpoint: customEndpoint, key: key, model: model,
                 prompt: prompt, jpegs: jpegs, maxTokens: maxTokens)
         }
-        let (data, response) = try await URLSession.shared.data(
-            for: request)
-        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(code) else {
-            throw AIError.http(code,
-                               String(data: data, encoding: .utf8) ?? "")
-        }
-        guard let obj = try? JSONSerialization.jsonObject(with: data)
-            as? [String: Any],
-            let text = Self.extractText(kind: kind, from: obj),
-            !text.isEmpty else {
-            throw AIError.badReply(
-                String(data: data, encoding: .utf8) ?? "empty")
-        }
-        return text
+        return try await send(request)
     }
 
     /// GET /v1beta/models with this key: every general-purpose model
@@ -414,7 +461,9 @@ final class AIService: ObservableObject {
 
     private static func geminiRequest(key: String, model: String,
                                       prompt: String, jpegs: [Data],
-                                      maxTokens: Int) throws -> URLRequest {
+                                      maxTokens: Int,
+                                      thinkingOff: Bool) throws
+        -> URLRequest {
         let url = URL(string: "https://generativelanguage.googleapis.com"
             + "/v1beta/models/\(model):generateContent")!
         var parts: [[String: Any]] = [["text": prompt]]
@@ -424,18 +473,21 @@ final class AIService: ObservableObject {
                 "data": jpeg.base64EncodedString(),
             ]])
         }
+        // Thinking models burn output budget on reasoning before the
+        // first visible word (empty content + MAX_TOKENS). We ASK for
+        // no thinking where supported — but model generations disagree
+        // about the knob's name and reject unknown ones with 400, so
+        // geminiCall drops it on rejection and retries.
+        var generation: [String: Any] = [
+            "temperature": 0.2,
+            "maxOutputTokens": maxTokens,
+        ]
+        if thinkingOff {
+            generation["thinkingConfig"] = ["thinkingBudget": 0]
+        }
         let body: [String: Any] = [
             "contents": [["parts": parts]],
-            // thinkingBudget 0: Gemini 2.5+/3.x are thinking models
-            // and will silently burn the WHOLE output budget on
-            // internal reasoning, returning empty content with
-            // finishReason MAX_TOKENS (field test 4's screenshot).
-            // Naming household objects needs no chain of thought.
-            "generationConfig": [
-                "temperature": 0.2,
-                "maxOutputTokens": maxTokens,
-                "thinkingConfig": ["thinkingBudget": 0],
-            ],
+            "generationConfig": generation,
         ]
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
