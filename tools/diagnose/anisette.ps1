@@ -93,7 +93,7 @@ if ($exe.LastWriteTime -lt (Get-Date).AddMonths(-6)) {
 
 # ---- 2. the DLLs themselves --------------------------------------------
 Section "Anisette DLL load test ($dllArch)"
-if ((if ([IntPtr]::Size -eq 8) { 'x64' } else { 'x86' }) -ne $dllArch) {
+if ($hostArch -ne $dllArch) {
     Write-Host "  skipped (host architecture does not match)"
 } else {
     Add-Type -TypeDefinition @"

@@ -27,3 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift test --package-path apps/navcore
+
+  # The Windows helper scripts have branches that only run on a machine
+  # in a particular broken state, so a mistake can sit in one unnoticed
+  # until the day you need it.
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint PowerShell tools
+        shell: pwsh
+        run: pwsh -File tools/ci/lint_powershell.ps1
