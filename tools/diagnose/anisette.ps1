@@ -86,9 +86,16 @@ Get-ChildItem $root -Filter *.exe -Force | ForEach-Object {
 "  architecture: $exeArch (anisette DLLs: $dllArch)"
 $exe = Get-Item "$root\sideloadly.exe"
 if ($exe.LastWriteTime -lt (Get-Date).AddMonths(-6)) {
-    $problems += ("Sideloadly binary is from {0}. Apple moves its auth " +
-        "endpoints; a stale build is a common cause of " +
-        "'Login failed: 404'.") -f $exe.LastWriteTime.ToString('MMMM yyyy')
+    # Deliberately not a failure. Sideloadly ships infrequently, so the
+    # current release is often months old - the date alone proves
+    # nothing, and calling it a fault sends you reinstalling for no
+    # reason. It is only worth checking if you are seeing auth errors.
+    $built = $exe.LastWriteTime.ToString('MMMM yyyy')
+    Write-Host "  note: this build is from $built. Only relevant if you see" `
+        -ForegroundColor DarkGray
+    Write-Host "        'Login failed: 404' - then check sideloadly.io for" `
+        -ForegroundColor DarkGray
+    Write-Host "        a newer release." -ForegroundColor DarkGray
 }
 
 # ---- 2. the DLLs themselves --------------------------------------------
