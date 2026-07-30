@@ -4,6 +4,10 @@ This directory hosts everything with real dependencies (PyTorch, ONNX
 Runtime, ultralytics, gymnasium…). The engine stays stdlib-only; these
 lanes *feed* it (observations in, policies behind existing seams).
 
+**Numbers live in [RESULTS.md](RESULTS.md)** — real-footage depth
+validation, detection waypoints, the PPO-vs-baseline table, inpainting
+metrics, and the reproduce commands for each.
+
 Priorities per the 2026-07 decision: **Lane A and B first** (they upgrade
 the iPhone XR path and teach deployment), RL + inpainting after (M5/M6).
 
@@ -44,6 +48,8 @@ rl/env.py             Lane C: Gymnasium NavEnv over the engine sim
 rl/rooms.py           procedural room curriculum (empty→static→clutter→movers)
 rl/evaluate.py        success-rate + SPL harness (any policy)
 rl/train.py           PPO trainer (stable-baselines3) — guarded CLI
+rl/export.py          trained policy → verified ONNX (parity + held-out
+                      behavior checks) — guarded CLI
 tests/                19 tests, no ML deps required
 ```
 
@@ -87,22 +93,25 @@ get exact inputs.
 4. On-device (M4): try Vision's built-in classifiers first; custom-convert
    YOLO11n via coremltools if furniture classes are needed
 
-## Lane C — Learned steering with RL (M5)
+## Lane C — Learned steering with RL (trained; on-device at M5)
+
+As built (`rl/env.py`, deliberately smaller than the first sketch —
+a 15×15 crop turned out to be plenty and trains in minutes, not hours):
 
 - Env: gymnasium wrapper around `theseus_engine.sim` (deterministic,
-  procedurally-generated rooms for train/held-out split)
-- Obs: 64×64 egocentric occupancy crop (unknown/free/occupied) + goal
-  bearing (sin, cos) + goal distance + previous action
-- Actions: discrete — 24 heading bins × {stop, slow, fast}
-- Reward: potential-based shaping on D* distance-to-goal (preserves
-  optimality!), −collision-proximity, −per-step, −|Δheading| (jerk hurts
-  a guided human), +arrival
-- Train: PPO (stable-baselines3), curriculum: empty → static clutter →
-  1 mover → 3 movers
-- Eval vs VFH: success rate, SPL (Anderson et al. 2018), path length
-  ratio, jerk
-- Deploy: export policy MLP/CNN → Core ML; implement `SteeringPolicy`;
-  A/B toggle in the diagnostic HUD
+  procedurally-generated rooms; held-out seeds disjoint from training)
+- Obs: 15×15 egocentric occupancy crop + goal bearing (sin, cos) +
+  normalized remaining distance + last speed — ego framing buys
+  translation/rotation invariance across rooms
+- Actions: 10 discrete (5 relative-heading deltas × 2 speeds); the sim
+  enforces turn-rate limits, not the policy
+- Reward: potential-based shaping (Ng et al. 1999) on the flow-field
+  geodesic — dense gradient every step, provably optimality-preserving
+- Train: PPO, curriculum static → movers1 → movers3 with warm starts
+- Results + the full learned-vs-baseline table: [RESULTS.md](RESULTS.md)
+- Deploy: `rl/export.py` → verified ONNX today (78 KiB, action-parity
+  and held-out behavior checked); Core ML conversion from the .onnx at
+  M5, behind the engine's `SteeringPolicy` seam with an A/B toggle
 
 ## Lane D — Map inpainting (M6, most research-flavored)
 

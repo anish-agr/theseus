@@ -10,10 +10,11 @@ numpy>=1.26
 # Lane B — detection waypoints on real footage (run_detect.py)
 ultralytics>=8.1
 
-# Lane C — learned steering (rl/train.py, rl/evaluate.py with a net)
+# Lane C — learned steering (rl/train.py, rl/export.py)
 gymnasium>=0.29
 stable-baselines3>=2.3
 torch>=2.2
+onnx>=1.16          # rl/export.py (onnxruntime above runs the result)
 
-# Export a trained/relative model to Core ML — done on the Mac at M4/M5
+# ONNX -> Core ML happens on the Mac at M4/M5
 # coremltools>=7.1
