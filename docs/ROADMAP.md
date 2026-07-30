@@ -6,8 +6,7 @@ as solvers over the shared world model (see ARCHITECTURE.md §0).
 Standing note (2026-07-28): on-device field testing settled the app's
 identity — it ships as a home **inventory** with insurance/move-in-out
 evidence as the value, navigation as a supporting tool. The milestones
-below track the spatial-OS substrate that identity runs on; the
-product's own requirements live in REQUIREMENTS.md.
+below track the spatial substrate that identity runs on.
 
 ## M0 — Engine on Windows ✅ (2026-07)
 
@@ -49,8 +48,8 @@ against synthetic ground truth; what remains needs a real model + footage.
       130/133 camera-track cells FREE, 0 OCC. Known limit (measured):
       floor-ray waypoint placement overshoots for elevated objects
       (desk monitors) — depth-fused placement is the M4 fix.
-- [ ] Optional: my own room video (docs/capture-footage.md) — a
-      nice-to-have now, no longer the acceptance gate
+- [ ] Optional: additional self-captured room footage — a nice-to-have
+      now, no longer the acceptance gate
 - Acceptance: a video of a room becomes a plausible occupancy slice +
   labeled waypoint set, replayed in the viewer. **Met, on real footage.**
 

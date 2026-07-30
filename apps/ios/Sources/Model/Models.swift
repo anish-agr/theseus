@@ -1,6 +1,6 @@
-// SwiftData entities — see docs/DATA-MODEL.md for the full contract.
-// Rule: queryable metadata lives here; large opaque bytes (world maps,
-// grids, photos) live in files and are referenced by id (see Store).
+// SwiftData entities. Rule: queryable metadata lives here; large
+// opaque bytes (world maps, grids, photos) live in files and are
+// referenced by id (see Store).
 import Foundation
 import SwiftData
 

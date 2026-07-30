@@ -1,6 +1,7 @@
 # footage/ — local test videos (gitignored)
 
-Videos in this directory are NOT committed (see docs/capture-footage.md
+Videos in this directory are NOT committed (100 MB binaries don't
+belong in git
 for how to record and why). This manifest IS committed: one line per
 clip so the repo remembers what footage exists and how it was shot.
 

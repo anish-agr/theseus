@@ -1,6 +1,6 @@
 // Theseus — a spatial memory for the places you live.
 // Scan a room, point at things to remember them, then ask where they
-// are. See docs/PRD.md for the product argument.
+// are.
 import SwiftData
 import SwiftUI
 

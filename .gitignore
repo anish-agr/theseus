@@ -29,6 +29,15 @@ Thumbs.db
 CLAUDE.md
 .claude/
 
+# internal working docs — public docs are architecture/port/install/
+# no-mac/roadmap/brand + media
+docs/PRD.md
+docs/REQUIREMENTS.md
+docs/UX.md
+docs/DATA-MODEL.md
+docs/CHECKLIST.md
+docs/capture-footage.md
+
 # Xcode (from milestone M1 on)
 apps/ios/**/xcuserdata/
 apps/ios/**/DerivedData/

@@ -1,7 +1,7 @@
 // Blob storage: the bytes too big or too opaque for SwiftData.
-// Layout is documented in docs/DATA-MODEL.md and mirrors the Python
-// engine's on-disk grid format (theseus-grid/1) on purpose — a phone
-// scan opens in the desktop viewer, and vice versa.
+// The grid layout mirrors the Python engine's on-disk format
+// (theseus-grid/1) on purpose — a phone scan opens in the desktop
+// viewer, and vice versa.
 import ARKit
 import Foundation
 import NavCore

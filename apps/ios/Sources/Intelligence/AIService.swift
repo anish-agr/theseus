@@ -10,7 +10,7 @@
 //   custom    — any OpenAI-compatible /chat/completions endpoint
 //               (Groq, OpenRouter, a home server…), free tiers exist.
 //
-// Privacy contract (REQUIREMENTS NFR-1): a photo leaves the device ONLY
+// Privacy contract: a photo leaves the device ONLY
 // when the user taps an explicitly-AI button; nothing is ever sent in
 // the background. Keys live in the Keychain, never in defaults, and are
 // sent as headers, never in URLs.
