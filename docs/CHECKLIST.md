@@ -43,7 +43,7 @@ Status key: ✅ done & tested · 🧪 done offline, needs real input ·
 
 ## What unblocks the remaining items
 
-1. **Footage** (you, ~15 min): docs/capture-footage.md. Unlocks Lanes
+1. **Footage** (~15 min of phone video): docs/capture-footage.md. Unlocks Lanes
    A/B on reality → the real-footage acceptance for M0.5. Everything
    else is staged: deps installed, DA-V2-Small ONNX + yolo11n.pt
    downloaded (learning/models/, gitignored), both runners verified

@@ -133,7 +133,7 @@ struct ThreadLogoView: View {
 
 /// Cold-start ritual, ~1.5 s total: the thread draws itself FORWARD
 /// from its origin toward the destination — the path leads to the
-/// dot, which appears when the thread arrives (Anish, field test 5)
+/// dot, which appears only when the thread arrives (field test 5)
 /// — one soft pulse, and everything ends still.
 struct LaunchOverlay: View {
     var onFinished: () -> Void

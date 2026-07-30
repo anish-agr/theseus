@@ -25,6 +25,10 @@ footage/*
 .DS_Store
 Thumbs.db
 
+# local tooling notes / configs
+CLAUDE.md
+.claude/
+
 # Xcode (from milestone M1 on)
 apps/ios/**/xcuserdata/
 apps/ios/**/DerivedData/

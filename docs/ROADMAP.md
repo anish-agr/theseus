@@ -43,7 +43,7 @@ against synthetic ground truth; what remains needs a real model + footage.
       130/133 camera-track cells FREE, 0 OCC. Known limit (measured):
       floor-ray waypoint placement overshoots for elevated objects
       (desk monitors) — depth-fused placement is the M4 fix.
-- [ ] Optional: Anish's own room video (docs/capture-footage.md) — a
+- [ ] Optional: my own room video (docs/capture-footage.md) — a
       nice-to-have now, no longer the acceptance gate
 - Acceptance: a video of a room becomes a plausible occupancy slice +
   labeled waypoint set, replayed in the viewer. **Met, on real footage.**

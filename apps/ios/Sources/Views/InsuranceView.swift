@@ -1,7 +1,7 @@
 // The insurance assistant: one screen that answers "if this building
 // burned down tomorrow, could I prove what I owned?" Totals, the gaps
 // in the paper trail, warranty status — all passive, surfaced when YOU
-// open it (Anish's law: no nagging, ever) — and the one-tap claim PDF.
+// open it (house rule: no nagging, ever) — and the one-tap claim PDF.
 import SwiftData
 import SwiftUI
 

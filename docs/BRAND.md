@@ -1,6 +1,6 @@
 # Theseus brand & motion
 
-Spec set by Anish, 2026-07-28. The logo is a single continuous thread
+Spec frozen 2026-07-28. The logo is a single continuous thread
 ending in a glowing destination point. Everything should feel calm,
 confident, and inevitable — the app already knows the way.
 
@@ -44,7 +44,7 @@ SuccessDot); the app icon is generated from the same path by
 
 ## Restraint clause
 
-Full indigo, but with reason (Anish: "don't overwhelm the user").
+Full indigo, but with reason — don't overwhelm the user.
 System components keep their materials; the brand shows up in the
 launch ritual, loading states, success/error moments, accent color,
 and the Home hub background — not as a re-skin of every control.

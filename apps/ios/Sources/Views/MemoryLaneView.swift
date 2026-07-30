@@ -1,6 +1,6 @@
 // Memory lane — the home's diary, assembled from data the app already
 // keeps: first captures, moves, scans, sealed condition records. Not a
-// habit tracker, no streaks, no guilt (Anish's law: nobody scans their
+// habit tracker, no streaks, no guilt (house rule: nobody scans their
 // home daily); just "look at everything from July" whenever you feel
 // like looking. The photos do the remembering.
 import SwiftData

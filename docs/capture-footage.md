@@ -57,8 +57,8 @@ tiny derived artifacts (traces, waypoint JSONs) get committed.
 wall. Stand at a measured distance D (e.g. 2.00 m), frame the wall, and
 slide the tape marks until they sit exactly at the LEFT and RIGHT edges
 of the video frame. Measure the tape-to-tape distance X. Then
-`hfov = 2·atan((X/2)/D)` — tell me X and D and I'll set `--hfov`
-properly (my current default is a guessed 68°).
+`hfov = 2·atan((X/2)/D)` — feed that into `--hfov` (the default is a
+guessed 68°).
 
 ## Getting it onto the PC and "into the repo"
 

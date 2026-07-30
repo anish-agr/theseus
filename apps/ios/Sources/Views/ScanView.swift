@@ -212,7 +212,7 @@ struct ScanView: View {
             draftName = thing.displayName
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             session.pendingCapture = nil
-            // Cascade order (Anish's): classifier → lookalike → AI →
+            // Cascade order: classifier → lookalike → AI →
             // text on the object → ask. The AI step runs here, after
             // commit, because it's async — it quietly upgrades weak
             // auto-names and only ever asks the user when IT failed
