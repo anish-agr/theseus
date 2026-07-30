@@ -72,8 +72,8 @@ against synthetic ground truth; what remains needs a real model + footage.
       goal pin + agent entity — needs on-device validation
 - [x] On-device trace recorder (same JSONL schema) + share-sheet export
 - Acceptance: iPhone XR maps a room live and a virtual agent walks it.
-  **Met 2026-07-28** — first on-device field test; seven field tests
-  and three releases followed (v0.2 → v1.1).
+  **Met 2026-07-28** — first on-device field test; seven field-test
+  cycles and six releases followed (v0.2 → v1.1).
 
 ## M2 — LiDAR, persistence, waypoints, house scale
 

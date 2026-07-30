@@ -1,7 +1,7 @@
 # Building Theseus without a Mac
 
 This playbook was written as a plan; it is now a report. The entire
-app — engine port, iOS app, seven on-device field-test cycles, three
+app — engine port, iOS app, seven on-device field-test cycles, six
 releases — happened from a Windows machine and free cloud macOS
 runners. No Mac was touched.
 
