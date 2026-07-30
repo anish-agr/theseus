@@ -21,7 +21,7 @@ product's own requirements live in REQUIREMENTS.md.
 - [x] Golden trace fixtures + HTML replay viewer
 - [x] Walk mode: goal-free VFH roam + sensor-freshness & swept-body
       safety gates (added after M0; golden, 0 collisions with a mover)
-- 89 engine tests green (113 with learning/).
+- 90 engine tests green (113 with learning/).
 
 ## M0.5 — ML lanes offline (Windows) — largely ✅
 
