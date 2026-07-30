@@ -1,21 +1,22 @@
 # Building Theseus without a Mac
 
-Everything in this project needs macOS *eventually* — but far less of it
-than you'd think, and none of it soon. This is the playbook for how far
-Windows + free cloud machines take us, and exactly what the Mac is for.
+This playbook was written as a plan; it is now a report. The entire
+app — engine port, iOS app, seven on-device field-test cycles, three
+releases — happened from a Windows machine and free cloud macOS
+runners. No Mac was touched.
 
-## What needs what (the honest table)
+## What needs what (the honest table, updated as things shipped)
 
-| work | needs a Mac? | how we do it Mac-less |
+| work | needs a Mac? | how it was done Mac-less |
 |---|---|---|
 | Engine (Python) — done | no | this machine |
-| ML lanes (train/eval) — done | no | this machine |
-| **NavCore Swift port** (M1's biggest chunk) | **no** | Swift toolchain on Windows (`apps/navcore`), verified against parity fixtures + golden traces |
+| ML lanes (train/eval/export) — done | no | this machine |
+| **NavCore Swift port** — done | **no** | Swift toolchain on Windows (`apps/navcore`), verified against parity fixtures + golden traces |
 | CI: tests on every push | no | GitHub Actions, free for public repos (`.github/workflows/ci.yml`) |
-| Compiling the iOS app | macOS, not OURS | GitHub Actions `macos-*` runners build the .ipa in the cloud |
-| Installing on the iPhone XR | no | Sideloadly on Windows + free Apple ID (7-day resign, 3-app cap) |
-| Debugging on-device | mostly no | the app writes the same JSONL traces as the engine; replay them in tools/viewer — our own instrumentation instead of Xcode's |
-| ARKit look-and-feel iteration | **yes** | the one true Mac need: rent (~$30–50/mo cloud) or used M1 Mini (~$300–400) for that phase only |
+| Compiling the iOS app — live | macOS, not OURS | GitHub Actions `macos-*` runners build an unsigned `Theseus.ipa` per push (`ios.yml`) |
+| Installing on the iPhone XR — live | no | **AltServer** on Windows + free Apple ID (7-day resign, 3-app cap). Sideloadly was the first plan; its anisette layer broke and AltServer worked — both routes plus a TestFlight path are in docs/INSTALL.md |
+| Debugging on-device | mostly no | field-test cycles: build in the cloud, sideload, observe, fix — plus the app's own trace/report exports instead of Xcode's instruments |
+| ARKit look-and-feel iteration | **eventually** | the one true Mac need, for M4's Core ML depth work: used M1 Mini (~$300–400) or cloud rental, for that phase only |
 
 ## 1. Swift on Windows (the port happens HERE)
 
@@ -45,21 +46,26 @@ ci.yml runs the Python engine suite AND builds + tests NavCore on Linux
 — which also proves the port never quietly grows an Apple-only
 dependency. Nothing to configure; push and watch the Actions tab.
 
-## 3. When the app exists (M1 ARKit shell): cloud Macs build it
+## 3. Cloud Macs build the app
 
 GitHub Actions offers macOS runners with Xcode preinstalled — same free
-allowance. The workflow (added when apps/ios exists) archives an
-unsigned .ipa artifact per push. No Mac touched.
+allowance. `ios.yml` regenerates the Xcode project from `project.yml`
+(XcodeGen — no generated project files in the repo), builds, and
+archives an unsigned .ipa artifact on every push that touches `apps/`.
 
 ## 4. Getting builds onto the phone, from Windows
 
-[Sideloadly](https://sideloadly.io) (Windows app) signs an .ipa with a
-free Apple ID and installs it over USB to the XR.
+[AltServer](https://altstore.io) (Windows) signs the .ipa with a free
+Apple ID and installs it over USB — Shift-click its tray icon →
+Sideload .ipa. Same bundle id updates in place, so app data survives
+every reinstall.
 
 - free-account limits: app expires after 7 days (re-sideload weekly),
   max 3 sideloaded apps, and the bundle id gets prefixed
 - the $99/yr Apple Developer account removes those limits and adds
   TestFlight over-the-air installs — an option, never a requirement
+- full walkthrough, plus the TestFlight route and what broke with
+  Sideloadly's anisette layer: docs/INSTALL.md
 
 ## 5. Debugging without Xcode
 
@@ -85,5 +91,5 @@ preference when that day comes:
    build-sideload cycle — acceptable for polish, painful for
    exploration.
 
-Everything upstream of that day — the entire NavCore port, all CI, the
-first sideloaded build — costs $0 and starts now.
+Everything upstream of that day — the NavCore port, all CI, every
+build the phone has ever run — cost $0.

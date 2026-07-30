@@ -3,6 +3,12 @@
 Milestones are gates: each has acceptance criteria, and features only ship
 as solvers over the shared world model (see ARCHITECTURE.md §0).
 
+Standing note (2026-07-28): on-device field testing settled the app's
+identity — it ships as a home **inventory** with insurance/move-in-out
+evidence as the value, navigation as a supporting tool. The milestones
+below track the spatial-OS substrate that identity runs on; the
+product's own requirements live in REQUIREMENTS.md.
+
 ## M0 — Engine on Windows ✅ (2026-07)
 
 - [x] Occupancy grid: bounded log-odds, semantics, capped clearance field
@@ -66,24 +72,32 @@ against synthetic ground truth; what remains needs a real model + footage.
       goal pin + agent entity — needs on-device validation
 - [x] On-device trace recorder (same JSONL schema) + share-sheet export
 - Acceptance: iPhone XR maps a room live and a virtual agent walks it.
-  *(Code complete + cloud-built; awaiting first sideload.)*
+  **Met 2026-07-28** — first on-device field test; seven field tests
+  and three releases followed (v0.2 → v1.1).
 
 ## M2 — LiDAR, persistence, waypoints, house scale
 
 - [ ] LiDAR provider (`.meshWithClassification`) on 12 Pro+
-- [ ] ARWorldMap save/load + sidecar (grid chunks, room graph, waypoints)
-- [ ] Named waypoint UX ("Kitchen Fridge") on anchors
-- [ ] Chunked grid + room-graph hierarchical planning
+- [x] ARWorldMap save/load + sidecar — shipped in-app per room
+      (LZFSE-compressed map blob + SwiftData world; relocalizes on
+      scan resume)
+- [x] Named waypoint UX — shipped as the inventory itself: every
+      captured thing is a named, locatable anchor
+- [ ] Chunked grid + room-graph hierarchical planning (cross-room)
 - Acceptance: relocalize into a saved multi-room map and plan across rooms
-  instantly.
+  instantly. *(Per-room half is live; cross-room needs the room graph.)*
 
-## M3 — Ariadne mode (human guidance, the hero)
+## M3 — Ariadne mode (human guidance)
 
+Field testing demoted guidance from hero to supporting tool — the
+default "find" is locate-in-camera (AR beacon + distance-scaled haptic
+ticks, shipped), with turn-by-turn one tap away (shipped, voice muted
+by default). What remains is the full eyes-up experience:
+
+- [x] Locate haptics (geiger ticks quicken as you close in) + route-
+      aware direction that never points through walls
+- [x] Voice cues (AVSpeech) baseline over the phone speaker
 - [ ] Cue → CoreHaptics corridor patterns (intensity = corridor width)
-- [ ] Phone-speaker audio beacon + voice as the BASELINE (no AirPods
-      available — head-tracked spatial audio is a future nicety, not a
-      dependency)
-- [ ] Voice cues (AVSpeech) + big-type HUD
 - [ ] On-body test protocol (blindfold tests come much later, with a
       spotter, after weeks of sighted validation)
 - Acceptance: a sighted tester crosses a cluttered room eyes-up on haptics
@@ -106,7 +120,10 @@ against synthetic ground truth; what remains needs a real model + footage.
       learned vs baseline): static 0.90/0.85 vs 0.60/0.60 · movers1
       0.90/0.86 vs 0.37/0.37 · movers3 0.87/0.73 vs 0.30/0.30** — the
       gap WIDENS as movers are added; weights in learning/rl/runs/
-- [ ] Core ML export behind `SteeringPolicy`; in-app A/B toggle
+- [x] ONNX export, verified (rl/export.py): 78 KiB per stage, 256/256
+      action parity vs SB3, held-out success/SPL reproduced by the
+      exported artifact itself
+- [ ] ONNX → Core ML behind `SteeringPolicy`; in-app A/B toggle
 - Acceptance: learned policy ≥ VFH on success rate in held-out rooms, and
   you can flip between them live in the HUD.
 
