@@ -171,6 +171,17 @@ final class AIService: ObservableObject {
         Locale.current.currency?.identifier ?? "USD"
     }
 
+    /// URLSession.shared allows a request to dribble along for days;
+    /// on flaky wifi that reads as "it just never loads". Bound it:
+    /// 30 s of silence or 150 s total and the call fails loudly, which
+    /// the retry loop (or the user) can act on.
+    private static let http: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 150
+        return URLSession(configuration: config)
+    }()
+
     // ---- the three product calls ----------------------------------------
 
     /// "What is this?" — lens, unknown objects, voice.
@@ -210,6 +221,10 @@ final class AIService: ObservableObject {
     /// contents, itemized, each with a location box so a crowded
     /// shelf photo becomes per-item cropped thumbnails.
     func itemizeBox(images: [UIImage]) async throws -> [AIItem] {
+        defer { batchStatus = nil }
+        batchStatus = images.count > 1
+            ? "Reading \(images.count) photos…"
+            : "Reading the photo…"
         let prompt = """
         These \(images.count) photo(s) show the contents of one \
         storage container or shelf. List every distinct physical \
@@ -264,6 +279,8 @@ final class AIService: ObservableObject {
     func estimateValue(image: UIImage?, name: String,
                        details: String) async throws
         -> (value: Double, note: String) {
+        defer { batchStatus = nil }
+        batchStatus = "Estimating…"
         let prompt = """
         Estimate the replacement value of this item for a home \
         inventory, in \(currencyCode), as typically bought used/current \
@@ -288,6 +305,7 @@ final class AIService: ObservableObject {
     func identifyBatch(_ items: [(id: UUID, image: UIImage)])
         async throws -> [UUID: AIIdentification] {
         var out: [UUID: AIIdentification] = [:]
+        var lastFailure: Error?
         defer { batchStatus = nil }
         // 6 photos per call: well inside every provider's limits and
         // keeps one bad response from sinking the whole batch
@@ -295,8 +313,13 @@ final class AIService: ObservableObject {
             Array(items[$0..<min($0 + 6, items.count)])
         }
         for (index, chunk) in chunks.enumerated() {
+            // a single-chunk run used to show NOTHING for the whole
+            // 10-30 s call — always say what's happening
             batchStatus = chunks.count > 1
-                ? "Batch \(index + 1) of \(chunks.count)…" : nil
+                ? "Batch \(index + 1) of \(chunks.count) — "
+                    + "\(chunk.count) photos…"
+                : "Identifying \(chunk.count) "
+                    + "thing\(chunk.count == 1 ? "" : "s")…"
             // pace the free tier: back-to-back requests trip the
             // per-minute cap (field test 5's 429)
             if index > 0 {
@@ -317,23 +340,37 @@ final class AIService: ObservableObject {
             "value_note": "very short basis", \
             "confidence": number 0-1, how sure you are}
             """
-            let text = try await visionCall(
-                prompt: prompt,
-                images: chunk.map(\.image), maxTokens: 4000)
-            guard let arr = Self.jsonArray(in: text) else {
-                throw AIError.badReply(text)
-            }
-            for (i, obj) in arr.enumerated() where i < chunk.count {
-                out[chunk[i].id] = AIIdentification(
-                    name: (obj["name"] as? String) ?? "Object",
-                    category: (obj["category"] as? String) ?? "object",
-                    summary: (obj["summary"] as? String) ?? "",
-                    estimatedValue: Self.number(
-                        obj["estimated_value_\(currencyCode.lowercased())"]),
-                    valueNote: (obj["value_note"] as? String) ?? "",
-                    confidence: Self.anyNumber(obj["confidence"]))
+            do {
+                let text = try await visionCall(
+                    prompt: prompt,
+                    images: chunk.map(\.image), maxTokens: 4000)
+                guard let arr = Self.jsonArray(in: text) else {
+                    throw AIError.badReply(text)
+                }
+                for (i, obj) in arr.enumerated()
+                    where i < chunk.count {
+                    out[chunk[i].id] = AIIdentification(
+                        name: (obj["name"] as? String) ?? "Object",
+                        category: (obj["category"] as? String)
+                            ?? "object",
+                        summary: (obj["summary"] as? String) ?? "",
+                        estimatedValue: Self.number(
+                            obj["estimated_value_\(currencyCode.lowercased())"]),
+                        valueNote: (obj["value_note"] as? String)
+                            ?? "",
+                        confidence: Self.anyNumber(obj["confidence"]))
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // a chunk that failed after all its retries must not
+                // throw away the chunks that already succeeded — keep
+                // going, apply what worked, surface the error only if
+                // NOTHING worked (the rest stays queued for next tap)
+                lastFailure = error
             }
         }
+        if out.isEmpty, let lastFailure { throw lastFailure }
         return out
     }
 
@@ -370,12 +407,16 @@ final class AIService: ObservableObject {
     }
 
     /// Gemini's API surface shifts under us, so this call self-heals
-    /// three known ways (each learned from a field-test screenshot):
+    /// every failure the field tests have produced so far:
     ///  · 404 model retired      → list this key's models, retry
     ///  · 400 INVALID_ARGUMENT   → this generation rejects the
     ///    thinking-off knob; drop it, remember, retry
-    ///  · empty + MAX_TOKENS     → thinking ate the budget; retry
+    ///  · MAX_TOKENS             → thinking ate the budget; retry
     ///    with 4× the tokens
+    ///  · 429 per-minute cap     → wait Google's own retryDelay
+    ///  · 500/503 overloaded     → their capacity, not our bug;
+    ///    back off and retry
+    ///  · URLError               → wifi hiccup mid-upload; retry once
     private func geminiCall(key: String, prompt: String,
                             jpegs: [Data],
                             maxTokens: Int) async throws -> String {
@@ -401,20 +442,39 @@ final class AIService: ObservableObject {
                 thinkingOff = false
                 UserDefaults.standard.set(
                     true, forKey: "geminiNoThinkingCfg")
-            } catch AIError.truncated where attempts <= 3 {
+            } catch AIError.truncated where attempts <= 4 {
                 tokens = min(tokens * 4, 16000)
-            } catch AIError.http(429, let body) where attempts <= 3 {
+            } catch AIError.http(429, let body) where attempts <= 4 {
                 // free-tier per-MINUTE cap (field test 5) — Google
                 // says how long to wait; wait it and carry on
                 let delay = Self.retryDelay(in: body) ?? 20
-                guard delay <= 45 else {
+                guard delay <= 90 else {
                     throw AIError.http(429, body)
                 }
-                batchStatus = "Rate limit — waiting \(Int(delay)) s…"
-                try await Task.sleep(for: .seconds(delay))
-                batchStatus = nil
+                try await pause(delay,
+                                "Rate limit — waiting \(Int(delay)) s…")
+            } catch AIError.http(let code, _)
+                where (code == 500 || code == 503) && attempts <= 4 {
+                // "the model is overloaded, try again later" — their
+                // capacity blip, not something the user should retype
+                try await pause(Double(4 * attempts),
+                                "Model is busy — retrying…")
+            } catch let error as URLError
+                where attempts <= 3 && error.code != .cancelled {
+                try await pause(2, "Connection dropped — retrying…")
             }
         }
+    }
+
+    /// Wait with a visible reason, then put back whatever progress
+    /// line was showing — a mid-batch rate-limit wait must not blank
+    /// "Batch 2 of 3…" for the rest of the run.
+    private func pause(_ seconds: Double, _ reason: String)
+        async throws {
+        let resume = batchStatus
+        batchStatus = reason
+        try await Task.sleep(for: .seconds(seconds))
+        batchStatus = resume
     }
 
     /// Gemini 429 bodies carry RetryInfo like "retryDelay": "34s".
@@ -431,8 +491,7 @@ final class AIService: ObservableObject {
     /// Shared transport: run the request, surface HTTP failures with
     /// their body, hand back the extracted text.
     private func send(_ request: URLRequest) async throws -> String {
-        let (data, response) = try await URLSession.shared.data(
-            for: request)
+        let (data, response) = try await Self.http.data(for: request)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         let raw = String(data: data, encoding: .utf8) ?? ""
         guard (200..<300).contains(code) else {
@@ -443,10 +502,14 @@ final class AIService: ObservableObject {
             throw AIError.badReply(raw.isEmpty ? "empty" : raw)
         }
         let text = Self.extractText(kind: kind, from: obj) ?? ""
+        // MAX_TOKENS means the reply was cut mid-generation. A partial
+        // JSON array parses as nothing — surfacing it as "couldn't
+        // read the reply" (the old behavior) blames the parser for the
+        // budget. Treat any truncation as retryable-with-more-tokens.
+        if raw.contains("MAX_TOKENS") {
+            throw AIError.truncated
+        }
         guard !text.isEmpty else {
-            if raw.contains("MAX_TOKENS") {
-                throw AIError.truncated
-            }
             throw AIError.badReply(raw)
         }
         return text
@@ -483,8 +546,7 @@ final class AIService: ObservableObject {
             string: "https://generativelanguage.googleapis.com"
                 + "/v1beta/models?pageSize=200")!)
         req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-        let (data, response) = try await URLSession.shared.data(
-            for: req)
+        let (data, response) = try await http.data(for: req)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code),
               let obj = try? JSONSerialization.jsonObject(with: data)
@@ -671,10 +733,23 @@ final class AIService: ObservableObject {
     }
 
     static func jsonArray(in text: String) -> [[String: Any]]? {
-        guard let span = extract(text, open: "[", close: "]"),
-              let parsed = try? JSONSerialization.jsonObject(
-                with: Data(span.utf8)) else { return nil }
-        return parsed as? [[String: Any]]
+        if let span = extract(text, open: "[", close: "]"),
+           let parsed = try? JSONSerialization.jsonObject(
+            with: Data(span.utf8)),
+           let arr = parsed as? [[String: Any]] {
+            return arr
+        }
+        // some replies wrap the array in an object — {"items": [...]}
+        // — despite the prompt; take any array of objects inside
+        if let obj = jsonObject(in: text) {
+            for value in obj.values {
+                if let arr = value as? [[String: Any]],
+                   !arr.isEmpty {
+                    return arr
+                }
+            }
+        }
+        return nil
     }
 
     /// Models fence their JSON or wrap it in chat; take the outermost
