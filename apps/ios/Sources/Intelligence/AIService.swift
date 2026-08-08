@@ -302,17 +302,25 @@ final class AIService: ObservableObject {
     /// Batch mode — field test 3's "figure it all out afterwards":
     /// several photos per request, one JSON array back. Returns
     /// whatever it could identify, keyed by the caller's ids.
-    func identifyBatch(_ items: [(id: UUID, image: UIImage)])
+    func identifyBatch(_ ids: [UUID],
+                       image: (UUID) -> UIImage?)
         async throws -> [UUID: AIIdentification] {
         var out: [UUID: AIIdentification] = [:]
         var lastFailure: Error?
         defer { batchStatus = nil }
         // 6 photos per call: well inside every provider's limits and
-        // keeps one bad response from sinking the whole batch
-        let chunks = stride(from: 0, to: items.count, by: 6).map {
-            Array(items[$0..<min($0 + 6, items.count)])
+        // keeps one bad response from sinking the whole batch.
+        // Thumbnails load lazily PER CHUNK — a whole-house identify
+        // must never hold every decoded photo in memory at once (that
+        // is a jetsam kill on older devices, not a feature).
+        let chunks = stride(from: 0, to: ids.count, by: 6).map {
+            Array(ids[$0..<min($0 + 6, ids.count)])
         }
-        for (index, chunk) in chunks.enumerated() {
+        for (index, chunkIDs) in chunks.enumerated() {
+            let chunk = chunkIDs.compactMap { id in
+                image(id).map { (id: id, image: $0) }
+            }
+            guard !chunk.isEmpty else { continue }
             // a single-chunk run used to show NOTHING for the whole
             // 10-30 s call — always say what's happening
             batchStatus = chunks.count > 1
@@ -395,7 +403,13 @@ final class AIService: ObservableObject {
     private func visionCall(prompt: String, images: [UIImage],
                             maxTokens: Int) async throws -> String {
         guard let key = apiKey else { throw AIError.notConfigured }
-        let jpegs = images.compactMap { Self.downscaledJPEG($0) }
+        // This class is @MainActor for its published state, but image
+        // work is not UI work: downscale + JPEG for a 6-photo chunk
+        // costs real CPU, and doing it on the main thread stutters
+        // the whole app for every batch. Hop off for the pixels.
+        let jpegs = await Task.detached(priority: .userInitiated) {
+            images.compactMap { Self.downscaledJPEG($0) }
+        }.value
         if kind == .gemini {
             return try await geminiCall(key: key, prompt: prompt,
                                         jpegs: jpegs,
@@ -428,10 +442,15 @@ final class AIService: ObservableObject {
         while true {
             attempts += 1
             do {
-                let request = try Self.geminiRequest(
-                    key: key, model: model, prompt: prompt,
-                    jpegs: jpegs, maxTokens: tokens,
-                    thinkingOff: thinkingOff)
+                // base64 + JSON for a multi-photo body is megabytes of
+                // string work — built off the main actor
+                let (m, t, off) = (model, tokens, thinkingOff)
+                let request = try await Task.detached(
+                    priority: .userInitiated) {
+                    try Self.geminiRequest(
+                        key: key, model: m, prompt: prompt,
+                        jpegs: jpegs, maxTokens: t, thinkingOff: off)
+                }.value
                 return try await send(request)
             } catch AIError.http(404, _) where attempts <= 2 {
                 model = try await Self.discoverGeminiModel(key: key)
@@ -518,21 +537,27 @@ final class AIService: ObservableObject {
     private func performCall(key: String, model: String,
                              prompt: String, jpegs: [Data],
                              maxTokens: Int) async throws -> String {
-        let request: URLRequest
-        switch kind {
-        case .gemini:
-            request = try Self.geminiRequest(
-                key: key, model: model, prompt: prompt, jpegs: jpegs,
-                maxTokens: maxTokens, thinkingOff: false)
-        case .anthropic:
-            request = try Self.anthropicRequest(
-                key: key, model: model, prompt: prompt, jpegs: jpegs,
-                maxTokens: maxTokens)
-        case .custom:
-            request = try Self.openAIRequest(
-                endpoint: customEndpoint, key: key, model: model,
-                prompt: prompt, jpegs: jpegs, maxTokens: maxTokens)
-        }
+        let kind = self.kind
+        let endpoint = customEndpoint
+        let request = try await Task.detached(
+            priority: .userInitiated) { () -> URLRequest in
+            switch kind {
+            case .gemini:
+                return try Self.geminiRequest(
+                    key: key, model: model, prompt: prompt,
+                    jpegs: jpegs, maxTokens: maxTokens,
+                    thinkingOff: false)
+            case .anthropic:
+                return try Self.anthropicRequest(
+                    key: key, model: model, prompt: prompt,
+                    jpegs: jpegs, maxTokens: maxTokens)
+            case .custom:
+                return try Self.openAIRequest(
+                    endpoint: endpoint, key: key, model: model,
+                    prompt: prompt, jpegs: jpegs,
+                    maxTokens: maxTokens)
+            }
+        }.value
         return try await send(request)
     }
 

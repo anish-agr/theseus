@@ -15,12 +15,11 @@ import SwiftUI
 @discardableResult
 func applyBatchIdentification(_ targets: [Thing],
                               ai: AIService) async throws -> Int {
-    let items: [(id: UUID, image: UIImage)] = targets.compactMap {
-        thing in
-        Store.loadThumb(thing.id).map { (thing.id, $0) }
-    }
-    guard !items.isEmpty else { return 0 }
-    let results = try await ai.identifyBatch(items)
+    // ids only — identifyBatch loads each chunk's thumbnails as it
+    // needs them, so a whole-house pass never piles every decoded
+    // photo into memory at once
+    let results = try await ai.identifyBatch(
+        targets.map(\.id), image: { Store.loadThumb($0) })
     var applied = 0
     for thing in targets {
         guard let idn = results[thing.id] else { continue }
