@@ -88,6 +88,11 @@ argmax actions vs SB3 on real observations, then full held-out
 episodes driven by onnxruntime (success/SPL reproduce the table above
 exactly). Core ML conversion at M5 starts from these .onnx files.
 
+Known limit: everything above is measured **in simulation** — held-out
+procedural rooms, the engine's own kinematics. On-device behavior
+against real pose noise and real clutter is unmeasured until the M5
+integration; the numbers claim sim performance, nothing more.
+
 ```
 python learning/rl/train.py --stage movers1 --init learning/rl/runs/ppo_static
 python learning/rl/export.py --stage movers3 --episodes 30
@@ -108,6 +113,10 @@ Strictly advisory by policy: predicted cells are never traversable —
 the world model's "unknown is a wall" rule outranks any network. The
 use case is prioritizing frontier exploration and prettier previews,
 not routing humans through guessed space.
+
+Known limit: train and held-out rooms both come from the same
+procedural floorplan generator. Accuracy on real scanned rooms is
+unmeasured; treat the numbers as generator-domain results.
 
 ```
 python learning/inpaint/train_unet.py
