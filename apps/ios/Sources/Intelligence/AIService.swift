@@ -622,11 +622,9 @@ final class AIService: ObservableObject {
         return best
     }
 
-    private static func geminiRequest(key: String, model: String,
-                                      prompt: String, jpegs: [Data],
-                                      maxTokens: Int,
-                                      thinkingOff: Bool) throws
-        -> URLRequest {
+    nonisolated private static func geminiRequest(
+        key: String, model: String, prompt: String, jpegs: [Data],
+        maxTokens: Int, thinkingOff: Bool) throws -> URLRequest {
         let url = URL(string: "https://generativelanguage.googleapis.com"
             + "/v1beta/models/\(model):generateContent")!
         var parts: [[String: Any]] = [["text": prompt]]
@@ -662,10 +660,9 @@ final class AIService: ObservableObject {
         return req
     }
 
-    private static func anthropicRequest(key: String, model: String,
-                                         prompt: String, jpegs: [Data],
-                                         maxTokens: Int) throws
-        -> URLRequest {
+    nonisolated private static func anthropicRequest(
+        key: String, model: String, prompt: String, jpegs: [Data],
+        maxTokens: Int) throws -> URLRequest {
         var content: [[String: Any]] = []
         for jpeg in jpegs {
             content.append(["type": "image", "source": [
@@ -691,11 +688,9 @@ final class AIService: ObservableObject {
         return req
     }
 
-    private static func openAIRequest(endpoint: String, key: String,
-                                      model: String, prompt: String,
-                                      jpegs: [Data],
-                                      maxTokens: Int) throws
-        -> URLRequest {
+    nonisolated private static func openAIRequest(
+        endpoint: String, key: String, model: String, prompt: String,
+        jpegs: [Data], maxTokens: Int) throws -> URLRequest {
         let base = endpoint.hasSuffix("/")
             ? String(endpoint.dropLast()) : endpoint
         guard let url = URL(string: base + "/chat/completions"),
@@ -824,8 +819,9 @@ final class AIService: ObservableObject {
     }
 
     /// Cap the upload at ~1024 px / ~200 KB — plenty for recognition,
-    /// kind to free-tier quotas.
-    static func downscaledJPEG(_ image: UIImage) -> Data? {
+    /// kind to free-tier quotas. Nonisolated: pure pixel work, meant
+    /// to run off the main actor.
+    nonisolated static func downscaledJPEG(_ image: UIImage) -> Data? {
         let maxSide: CGFloat = 1024
         let side = max(image.size.width, image.size.height)
         let scale = side > maxSide ? maxSide / side : 1
