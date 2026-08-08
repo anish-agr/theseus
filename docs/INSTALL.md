@@ -20,9 +20,12 @@ in this repo as the route that removes every local dependency.
 ## Route A — Sideloadly
 
 `ios.yml` produces an unsigned `Theseus.ipa` artifact on every push to
-`main`. Download it from the run page, point Sideloadly at it, sign in
-with an Apple ID, install over USB. Then on the phone: Settings →
-General → VPN & Device Management → trust the developer.
+`main`. Download it from the run page — or grab the current build from
+the [releases page](https://github.com/anish-agr/theseus/releases),
+which does not expire (Actions artifacts are deleted after ~90 days).
+Point Sideloadly at it, sign in with an Apple ID, install over USB.
+Then on the phone: Settings → General → VPN & Device Management →
+trust the developer.
 
 ### If anisette fails
 
